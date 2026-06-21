@@ -1105,49 +1105,83 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
               "params": {"cwd": cwd, "mcpServers": []}})
 
         import time as _time
-        deadline = None
-        while True:
-            try:
-                msg = out_q.get(timeout=1.0)
-            except Exception:
-                if deadline is not None and _time.monotonic() > deadline:
+        # FIX 1: bound the handshake phase so a wedged process can't hold a
+        # semaphore slot forever.  Resets to the full timeout once the
+        # session/prompt (id=3) has been sent.
+        deadline = _time.monotonic() + min(timeout, 60.0)
+        try:
+            while True:
+                try:
+                    msg = out_q.get(timeout=1.0)
+                except Exception:
+                    if _time.monotonic() > deadline:
+                        proc.kill()
+                        raise GatewayError(504, "reasonix_timeout", f"reasonix acp timed out after {timeout:g}s")
+                    continue
+                if msg.get("__eof__"):
+                    break
+                if msg.get("id") == 2 and "result" in msg:
+                    session_id["v"] = msg["result"].get("sessionId")
+                    if not session_id["v"]:
+                        proc.kill()
+                        raise GatewayError(502, "reasonix_acp_error", "session/new returned no sessionId")
+                    send({"jsonrpc": "2.0", "id": 3, "method": "session/prompt",
+                          "params": {"sessionId": session_id["v"],
+                                     "prompt": [{"type": "text", "text": prompt}]}})
+                    # Reset deadline for the full work phase now that handshake is done.
+                    deadline = _time.monotonic() + timeout
+                elif msg.get("method") == "session/update":
+                    upd = (msg.get("params") or {}).get("update") or {}
+                    if upd.get("sessionUpdate") == "agent_message_chunk":
+                        content = upd.get("content") or {}
+                        if isinstance(content, dict) and content.get("type") == "text":
+                            text_parts.append(content.get("text", ""))
+                elif msg.get("id") == 3 and "result" in msg:
+                    stop_reason["v"] = msg["result"].get("stopReason")
+                    prompt_done["v"] = True
+                    break
+                elif msg.get("id") == 3 and "error" in msg:
                     proc.kill()
-                    raise GatewayError(504, "reasonix_timeout", f"reasonix acp timed out after {timeout:g}s")
-                continue
-            if msg.get("__eof__"):
-                break
-            if msg.get("id") == 2 and "result" in msg:
-                session_id["v"] = msg["result"].get("sessionId")
-                if not session_id["v"]:
-                    proc.kill()
-                    raise GatewayError(502, "reasonix_acp_error", "session/new returned no sessionId")
-                send({"jsonrpc": "2.0", "id": 3, "method": "session/prompt",
-                      "params": {"sessionId": session_id["v"],
-                                 "prompt": [{"type": "text", "text": prompt}]}})
-                deadline = _time.monotonic() + timeout
-            elif msg.get("method") == "session/update":
-                upd = (msg.get("params") or {}).get("update") or {}
-                if upd.get("sessionUpdate") == "agent_message_chunk":
-                    content = upd.get("content") or {}
-                    if isinstance(content, dict) and content.get("type") == "text":
-                        text_parts.append(content.get("text", ""))
-            elif msg.get("id") == 3 and "result" in msg:
-                stop_reason["v"] = msg["result"].get("stopReason")
-                prompt_done["v"] = True
-                break
-            elif msg.get("id") == 3 and "error" in msg:
-                proc.kill()
-                raise GatewayError(502, "reasonix_acp_error", msg["error"].get("message", "session/prompt error"))
+                    raise GatewayError(502, "reasonix_acp_error", msg["error"].get("message", "session/prompt error"))
 
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-        stderr_text = ""
-        try:
-            stderr_text = proc.stderr.read() if proc.stderr else ""
-        except Exception:
-            pass
+        finally:
+            # FIX 2: deterministic reap + pipe close on every exit path
+            # (success, GatewayError, timeout, OSError from within the loop).
+            # Terminate first so the process closes its end of stderr,
+            # allowing our stderr.read() below to return rather than block.
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+            # Read stderr now that the process is dead (won't block).
+            # On error/exception paths this is a best-effort capture; the
+            # caller receives the GatewayError and we discard stderr_text.
+            try:
+                _stderr_capture = proc.stderr.read() if proc.stderr else ""
+            except Exception:
+                _stderr_capture = ""
+            # Close all Python-side pipe fds on every exit path.
+            for _stream in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    if _stream:
+                        _stream.close()
+                except Exception:
+                    pass
+
+        # On the normal (non-exception) path, use the stderr captured above.
+        stderr_text = _stderr_capture
+
         cost = None
         cache = None
         m = re.search(r"cost:\$([0-9.]+)", stderr_text)
