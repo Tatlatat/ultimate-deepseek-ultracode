@@ -197,24 +197,22 @@ console.log(JSON.stringify({off, on}));
     expect(res["on"] == "deepseek-architecture", f"sentinel-off should keep deepseek, got {res['on']}")
 
 
-def test_wrapper_reasonix_flavor():
-    """wrapper_source_native() must emit reasonix-* agentTypes when CLAUDE_CODEX_FLAVOR=reasonix."""
+def test_wrapper_reasonix_flavor_keeps_codex_agenttype_names():
+    """In reasonix flavor the wrapper must KEEP the codex-*/deepseek-* agentType
+    names (which --agents defines and only-codex-fleet.py whitelists) — NOT emit
+    reasonix-* names that exist nowhere. The engine is reasonix via the model
+    route (launcher points codex-*/deepseek-* model at claude-reasonix-flash);
+    the agentType is just a label that must stay in sync across wrapper, --agents,
+    and the hook. Emitting reasonix-worker here (an agentType --agents doesn't
+    define and the hook doesn't whitelist) was the root cause of reasonix lanes
+    failing / being hook-blocked."""
     os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
     try:
         src = cw.wrapper_source_native()
-        expect("reasonix-worker" in src,
-               f"reasonix flavor must produce reasonix-worker; got: {src[:300]}")
-        expect("reasonix-security" in src,
-               "reasonix flavor must produce reasonix-security for security hints")
-        expect("reasonix-verify" in src,
-               "reasonix flavor must produce reasonix-verify for verify/test hints")
-        expect("reasonix-reviewer" in src,
-               "reasonix flavor must produce reasonix-reviewer for review hints")
-        expect("reasonix-research" in src,
-               "reasonix flavor must produce reasonix-research for deep/arch hints")
-        # The flavor const must be injected
-        expect("__claudeCodexFlavor = 'reasonix'" in src,
-               "flavor const must be injected as 'reasonix'")
+        expect("codex-worker" in src,
+               f"reasonix flavor must keep codex-worker agentType; got: {src[:300]}")
+        expect("reasonix-worker" not in src,
+               "reasonix flavor must NOT emit reasonix-worker (not in --agents / hook whitelist)")
     finally:
         os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
 
@@ -278,7 +276,7 @@ def main() -> int:
     test_gateway_detected_via_base_url_no_port_file()
     test_fail_open_on_bad_input()
     test_wrapper_honours_sentinel()
-    test_wrapper_reasonix_flavor()
+    test_wrapper_reasonix_flavor_keeps_codex_agenttype_names()
     test_wrapper_codex_flavor_regression()
     test_reasonix_cli_check_in_reasonix_flavor()
     print("PASS: workflow self-heal preflight + wrapper sentinel")

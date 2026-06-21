@@ -190,26 +190,13 @@ const __claudeCodexNativeAgentType = (opts = {}) => {
   // which needs no key, instead of 401-ing on claude-deepseek-pro.
   const forceCodexOnly = Boolean(globalThis.__claudeCodexForceCodexOnly)
 
-  // Reasonix flavor: map lanes to reasonix-* agentTypes.
-  if (__claudeCodexFlavor === 'reasonix') {
-    if (explicit.startsWith('reasonix-')) return explicit
-    const hint = [opts.label, opts.phase, explicit].filter(Boolean).join(' ').toLowerCase()
-    if (hint.includes('security')) return 'reasonix-security'
-    if (hint.includes('verify') || hint.includes('test')) return 'reasonix-verify'
-    if (hint.includes('review')) return 'reasonix-reviewer'
-    if (
-      hint.includes('research') ||
-      hint.includes('database') ||
-      hint.includes(' deep') ||
-      hint.includes(':deep') ||
-      hint.includes('mcp') ||
-      hint.includes('extraction') ||
-      hint.includes('architecture') ||
-      hint.includes('infra') ||
-      hint.includes('devops')
-    ) return 'reasonix-research'
-    return 'reasonix-worker'
-  }
+  // NOTE: both codex AND reasonix flavors use the SAME codex-*/deepseek-* agentType
+  // NAMES below. These names are just labels that must stay in sync with the
+  // --agents definitions and the only-codex-fleet.py whitelist. In reasonix flavor
+  // the launcher already points the codex-* / deepseek-* agent MODEL at
+  // claude-reasonix-flash, so the lane runs on Reasonix while keeping the codex-*
+  // label. Emitting reasonix-* names here (an agentType --agents never defines and
+  // the hook never whitelists) was what broke reasonix lanes.
 
   if (explicit.startsWith('codex-')) return explicit
   if (explicit.startsWith('deepseek-')) return forceCodexOnly ? 'codex-worker' : explicit
