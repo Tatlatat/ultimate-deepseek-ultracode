@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -1030,6 +1031,137 @@ def run_codex_cli(prompt: str, config: JSON) -> tuple[str, JSON]:
         "output_tokens": max(1, len(text) // 4),
     }
     return text, usage
+
+
+def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
+    import queue as _queue
+    reasonix_bin = str(config.get("reasonix_bin") or env_first("REASONIX_BIN", default="reasonix"))
+    model = str(config.get("target_model") or "deepseek-v4-flash")
+    effort = env_first("CLAUDE_CODEX_REASONIX_EFFORT", default="high")
+    budget = env_first("CLAUDE_CODEX_REASONIX_BUDGET", default="0.05")
+    timeout = float(env_first("CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "CODEX_FLEET_TIMEOUT_SECONDS", default="600"))
+    cwd = env_first("CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd())
+    max_attempts = max(1, env_int("CLAUDE_CODEX_GATEWAY_CODEX_MAX_ATTEMPTS", default=3))
+    semaphore = codex_cli_semaphore()
+    command = [
+        reasonix_bin, "acp",
+        "--dir", cwd,
+        "--yolo",
+        "-m", model,
+        "--effort", effort,
+        "--budget", budget,
+        "--no-config",
+    ]
+
+    def _attempt() -> tuple[str, JSON]:
+        proc = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, bufsize=1, cwd=cwd,
+        )
+        out_q: _queue.Queue = _queue.Queue()
+        text_parts: list[str] = []
+        session_id = {"v": None}
+        prompt_done = {"v": False}
+        stop_reason = {"v": None}
+
+        def send(obj: JSON) -> None:
+            assert proc.stdin is not None
+            proc.stdin.write(json.dumps(obj) + "\n")
+            proc.stdin.flush()
+
+        def reader() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    continue
+                out_q.put(msg)
+            out_q.put({"__eof__": True})
+
+        threading.Thread(target=reader, daemon=True).start()
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": 1, "clientCapabilities": {}}})
+        send({"jsonrpc": "2.0", "id": 2, "method": "session/new",
+              "params": {"cwd": cwd, "mcpServers": []}})
+
+        import time as _time
+        deadline = None
+        while True:
+            try:
+                msg = out_q.get(timeout=1.0)
+            except Exception:
+                if deadline is not None and _time.monotonic() > deadline:
+                    proc.kill()
+                    raise GatewayError(504, "reasonix_timeout", f"reasonix acp timed out after {timeout:g}s")
+                continue
+            if msg.get("__eof__"):
+                break
+            if msg.get("id") == 2 and "result" in msg:
+                session_id["v"] = msg["result"].get("sessionId")
+                if not session_id["v"]:
+                    proc.kill()
+                    raise GatewayError(502, "reasonix_acp_error", "session/new returned no sessionId")
+                send({"jsonrpc": "2.0", "id": 3, "method": "session/prompt",
+                      "params": {"sessionId": session_id["v"],
+                                 "prompt": [{"type": "text", "text": prompt}]}})
+                deadline = _time.monotonic() + timeout
+            elif msg.get("method") == "session/update":
+                upd = (msg.get("params") or {}).get("update") or {}
+                if upd.get("sessionUpdate") == "agent_message_chunk":
+                    content = upd.get("content") or {}
+                    if isinstance(content, dict) and content.get("type") == "text":
+                        text_parts.append(content.get("text", ""))
+            elif msg.get("id") == 3 and "result" in msg:
+                stop_reason["v"] = msg["result"].get("stopReason")
+                prompt_done["v"] = True
+                break
+            elif msg.get("id") == 3 and "error" in msg:
+                proc.kill()
+                raise GatewayError(502, "reasonix_acp_error", msg["error"].get("message", "session/prompt error"))
+
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        stderr_text = ""
+        try:
+            stderr_text = proc.stderr.read() if proc.stderr else ""
+        except Exception:
+            pass
+        cost = None
+        cache = None
+        m = re.search(r"cost:\$([0-9.]+)", stderr_text)
+        if m:
+            cost = float(m.group(1))
+        c = re.search(r"cache:([0-9.]+)%", stderr_text)
+        if c:
+            cache = float(c.group(1))
+        text = "".join(text_parts)
+        usage = {
+            "input_tokens": estimate_tokens({"messages": [{"role": "user", "content": prompt}]}),
+            "output_tokens": max(1, len(text) // 4),
+            "reasonix_cost_usd": cost,
+            "reasonix_cache_pct": cache,
+        }
+        return text, usage
+
+    with semaphore:
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                gateway_trace("reasonix_acp_attempt", model=model, attempt=attempt)
+                return _attempt()
+            except GatewayError as exc:
+                last_exc = exc
+                if exc.error_type == "reasonix_timeout":
+                    raise
+        if last_exc:
+            raise last_exc
+        raise GatewayError(502, "reasonix_acp_error", "reasonix acp produced no result")
 
 
 def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSON) -> JSON:

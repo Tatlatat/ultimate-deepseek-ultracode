@@ -1450,3 +1450,5 @@ python3 "$ROOT/tests/test-workflow-selfheal.py" || fail "workflow self-heal regr
 python3 "$ROOT/tests/test-gateway-nonstream-heartbeat.py" || fail "gateway non-stream heartbeat regression"
 
 python3 "$ROOT/tests/test-ccr-proxy-streaming.py" || fail "ccr-proxy SSE streaming regression"
+
+python3 "$ROOT/tests/test-reasonix-acp.py" || fail "reasonix acp driver regression"
