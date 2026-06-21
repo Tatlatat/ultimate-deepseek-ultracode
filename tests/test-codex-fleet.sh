@@ -1451,4 +1451,13 @@ python3 "$ROOT/tests/test-gateway-nonstream-heartbeat.py" || fail "gateway non-s
 
 python3 "$ROOT/tests/test-ccr-proxy-streaming.py" || fail "ccr-proxy SSE streaming regression"
 
+CLAUDE_CODEX_FLAVOR=reasonix python3 - "$GATEWAY" <<'PY' || fail "reasonix flavor must expose claude-reasonix-flash"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1])
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+reg = g.model_registry()
+assert "claude-reasonix-flash" in reg, list(reg)
+assert reg["claude-reasonix-flash"]["provider"] == "reasonix_cli"
+PY
+
 python3 "$ROOT/tests/test-reasonix-acp.py" || fail "reasonix acp driver regression"
