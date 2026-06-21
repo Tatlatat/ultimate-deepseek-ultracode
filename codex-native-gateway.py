@@ -18,6 +18,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -1057,22 +1058,33 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     cwd = env_first("CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd())
     max_attempts = max(1, env_int("CLAUDE_CODEX_GATEWAY_CODEX_MAX_ATTEMPTS", default=3))
     semaphore = codex_cli_semaphore()
-    command = [
-        reasonix_bin, "acp",
-        "--dir", cwd,
-        "--yolo",
-        "-m", model,
-        "--effort", effort,
-        "--budget", budget,
-    ]
 
     def _attempt() -> tuple[str, JSON]:
+        # acp writes per-turn usage+cost to the --transcript JSONL; that is the
+        # ONLY place the real cost/token counts are available (acp mode does NOT
+        # print a cost line on stderr the way `reasonix run` does). Use a fresh
+        # temp transcript per attempt and read it back after the run.
+        transcript_fd, transcript_path = tempfile.mkstemp(prefix="reasonix-acp-", suffix=".jsonl")
+        os.close(transcript_fd)
+        command = [
+            reasonix_bin, "acp",
+            "--dir", cwd,
+            "--yolo",
+            "-m", model,
+            "--effort", effort,
+            "--budget", budget,
+            "--transcript", transcript_path,
+        ]
         try:
             proc = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, bufsize=1, cwd=cwd,
             )
         except OSError as exc:
+            try:
+                os.unlink(transcript_path)
+            except Exception:
+                pass
             raise GatewayError(502, "reasonix_acp_error", f"failed to start reasonix acp: {exc}")
         out_q: _queue.Queue = _queue.Queue()
         text_parts: list[str] = []
@@ -1179,21 +1191,51 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
                 except Exception:
                     pass
 
-        # On the normal (non-exception) path, use the stderr captured above.
-        stderr_text = _stderr_capture
+        # _stderr_capture is kept only for error diagnostics; cost/usage come
+        # from the transcript JSONL below.
+        _ = _stderr_capture
 
+        # Parse the transcript: sum per-turn `cost`, take the LAST turn's token
+        # usage, and compute cache % from cache_hit / (hit + miss) tokens.
         cost = None
         cache = None
-        m = re.search(r"cost:\$([0-9.]+)", stderr_text)
-        if m:
-            cost = float(m.group(1))
-        c = re.search(r"cache:([0-9.]+)%", stderr_text)
-        if c:
-            cache = float(c.group(1))
+        in_tok = None
+        out_tok = None
+        try:
+            with open(transcript_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(rec.get("cost"), (int, float)):
+                        cost = (cost or 0.0) + float(rec["cost"])
+                    u = rec.get("usage")
+                    if isinstance(u, dict):
+                        if isinstance(u.get("prompt_tokens"), int):
+                            in_tok = u["prompt_tokens"]
+                        if isinstance(u.get("completion_tokens"), int):
+                            out_tok = u["completion_tokens"]
+                        hit = u.get("prompt_cache_hit_tokens")
+                        miss = u.get("prompt_cache_miss_tokens")
+                        if isinstance(hit, int) and isinstance(miss, int) and (hit + miss) > 0:
+                            cache = round(100.0 * hit / (hit + miss), 1)
+        except Exception:
+            pass
+        finally:
+            try:
+                os.unlink(transcript_path)
+            except Exception:
+                pass
+
         text = "".join(text_parts)
         usage = {
-            "input_tokens": estimate_tokens({"messages": [{"role": "user", "content": prompt}]}),
-            "output_tokens": max(1, len(text) // 4),
+            "input_tokens": in_tok if in_tok is not None
+            else estimate_tokens({"messages": [{"role": "user", "content": prompt}]}),
+            "output_tokens": out_tok if out_tok is not None else max(1, len(text) // 4),
             "reasonix_cost_usd": cost,
             "reasonix_cache_pct": cache,
         }
