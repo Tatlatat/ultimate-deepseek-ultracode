@@ -31,6 +31,38 @@ CODEX_BIN = os.getenv("CODEX_BIN", "codex")
 LOG_DIR = Path(os.getenv("CODEX_FLEET_LOG_DIR", "/Users/tatlatat/.claude/codex-fleet/runtime/logs"))
 
 
+def fleet_flavor() -> str:
+    return os.getenv("CLAUDE_CODEX_FLAVOR", "codex").strip().lower()
+
+
+_RX_GATEWAY = None
+
+
+def _reasonix_gateway_module():
+    """Lazily import the gateway module (same repo) so the MCP worker reuses the
+    exact, already-tested run_reasonix_acp + append_reasonix_cost. Cached;
+    returns None if it can't be loaded."""
+    global _RX_GATEWAY
+    if _RX_GATEWAY is not None:
+        return _RX_GATEWAY if _RX_GATEWAY is not False else None
+    try:
+        import importlib.util as _ilu
+        gw_path = Path(__file__).resolve().parent / "codex-native-gateway.py"
+        spec = _ilu.spec_from_file_location("_rx_gateway", gw_path)
+        mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _RX_GATEWAY = mod
+    except Exception:
+        _RX_GATEWAY = False
+        return None
+    return _RX_GATEWAY
+
+
+def _reasonix_acp_fn():
+    mod = _reasonix_gateway_module()
+    return getattr(mod, "run_reasonix_acp", None) if mod is not None else None
+
+
 def default_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -106,6 +138,63 @@ async def run_one_task(task: dict[str, Any], index: int, batch_id: str, max_outp
     log_prefix = LOG_DIR / f"{batch_id}-{index + 1:04d}-{safe_title}"
     stdout_path = str(log_prefix) + ".stdout.txt"
     stderr_path = str(log_prefix) + ".stderr.txt"
+
+    # Reasonix flavor: run the worker through reasonix acp (NOT codex exec), via the
+    # gateway's tested ACP driver. This is what makes single subagents in a
+    # claude-reasonix session actually run on Reasonix instead of Codex.
+    if fleet_flavor() == "reasonix":
+        rx = _reasonix_acp_fn()
+        if rx is not None:
+            prompt = str(task.get("prompt") or task.get("task") or "")
+            if not prompt.strip():
+                return {"index": index, "title": title, "ok": False,
+                        "error": "task prompt is required",
+                        "duration_ms": int((time.monotonic() - started) * 1000)}
+            cwd = task.get("cwd")
+            cwd_text = str(cwd) if cwd else os.getcwd()
+            model = task_value(task, "model", "CLAUDE_CODEX_REASONIX_MODEL", "deepseek-v4-flash")
+            config = {"reasonix_bin": os.getenv("REASONIX_BIN", "reasonix"),
+                      "target_model": model}
+            # run_reasonix_acp reads cwd from CLAUDE_CODEX_GATEWAY_CODEX_CWD.
+            prev_cwd = os.environ.get("CLAUDE_CODEX_GATEWAY_CODEX_CWD")
+            os.environ["CLAUDE_CODEX_GATEWAY_CODEX_CWD"] = cwd_text
+            try:
+                loop = asyncio.get_running_loop()
+                text, usage = await loop.run_in_executor(None, rx, prompt, config)
+            except Exception as exc:
+                return {"index": index, "title": title, "ok": False,
+                        "error": f"reasonix acp failed: {exc}",
+                        "duration_ms": int((time.monotonic() - started) * 1000)}
+            finally:
+                if prev_cwd is None:
+                    os.environ.pop("CLAUDE_CODEX_GATEWAY_CODEX_CWD", None)
+                else:
+                    os.environ["CLAUDE_CODEX_GATEWAY_CODEX_CWD"] = prev_cwd
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            Path(stdout_path).write_text(text or "", encoding="utf-8")
+            # Record the lane in the per-session cost ledger so `claude-reasonix cost`
+            # counts MCP-dispatched subagents too (same ledger as gateway lanes).
+            try:
+                gw = _reasonix_gateway_module()
+                ledger = os.getenv("CLAUDE_CODEX_REASONIX_COST_LEDGER",
+                                   str(LOG_DIR.parent / "reasonix-cost.jsonl"))
+                if gw is not None and hasattr(gw, "append_reasonix_cost"):
+                    gw.append_reasonix_cost(ledger, usage, cwd=cwd_text, model=model,
+                                            claude_equiv=usage.get("reasonix_claude_equiv_usd"))
+            except Exception:
+                pass
+            preview, truncated = truncate(text or "", max_output_chars)
+            return {
+                "index": index, "title": title, "ok": True, "exit_code": 0,
+                "engine": "reasonix", "model": model, "cwd": cwd_text,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "stdout": preview, "stdout_truncated": truncated,
+                "stdout_log": stdout_path,
+                "reasonix_cost_usd": usage.get("reasonix_cost_usd"),
+                "reasonix_cache_pct": usage.get("reasonix_cache_pct"),
+                "input_tokens": usage.get("input_tokens"),
+                "output_tokens": usage.get("output_tokens"),
+            }
 
     try:
         command, cwd, prompt = build_codex_command(task)
