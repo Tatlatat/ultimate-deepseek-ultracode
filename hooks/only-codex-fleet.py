@@ -20,6 +20,10 @@ def native_subagents_enabled() -> bool:
     return os.getenv("CLAUDE_CODEX_NATIVE_SUBAGENTS", "0").lower() in {"1", "true", "yes", "on"}
 
 
+def flavor() -> str:
+    return os.getenv("CLAUDE_CODEX_FLAVOR", "codex").strip().lower()
+
+
 def payload_mentions_native_agent(payload) -> bool:
     for value in iter_strings(payload):
         lowered = value.lower()
@@ -51,6 +55,14 @@ def main() -> int:
         return 0
 
     if native_subagents_enabled() and payload_mentions_native_agent(payload):
+        return 0
+
+    # Reasonix flavor: do NOT push subagents to the codex_fleet MCP (which runs
+    # `codex exec` = Codex, not Reasonix). Let the native Agent tool run so the
+    # lane routes through the CCR proxy → gateway → reasonix acp, keeping ALL
+    # agents on Reasonix as the session intends. The codex-fleet MCP has no
+    # reasonix backend, so forcing it here would silently run Codex instead.
+    if flavor() == "reasonix":
         return 0
 
     shown = tool_name or "<unknown>"
