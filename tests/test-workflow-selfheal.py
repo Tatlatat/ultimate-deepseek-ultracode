@@ -197,6 +197,51 @@ console.log(JSON.stringify({off, on}));
     expect(res["on"] == "deepseek-architecture", f"sentinel-off should keep deepseek, got {res['on']}")
 
 
+def test_wrapper_reasonix_flavor():
+    """wrapper_source_native() must emit reasonix-* agentTypes when CLAUDE_CODEX_FLAVOR=reasonix."""
+    os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
+    try:
+        src = cw.wrapper_source_native()
+        expect("reasonix-worker" in src,
+               f"reasonix flavor must produce reasonix-worker; got: {src[:300]}")
+        expect("reasonix-security" in src,
+               "reasonix flavor must produce reasonix-security for security hints")
+        expect("reasonix-verify" in src,
+               "reasonix flavor must produce reasonix-verify for verify/test hints")
+        expect("reasonix-reviewer" in src,
+               "reasonix flavor must produce reasonix-reviewer for review hints")
+        expect("reasonix-research" in src,
+               "reasonix flavor must produce reasonix-research for deep/arch hints")
+        # The flavor const must be injected
+        expect("__claudeCodexFlavor = 'reasonix'" in src,
+               "flavor const must be injected as 'reasonix'")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+
+
+def test_wrapper_codex_flavor_regression():
+    """wrapper_source_native() must keep codex-worker/deepseek-* when flavor is unset or 'codex'."""
+    # Unset case
+    os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+    try:
+        src = cw.wrapper_source_native()
+        expect("codex-worker" in src,
+               f"codex flavor (unset) must still produce codex-worker; got: {src[:300]}")
+        expect("deepseek-" in src,
+               "codex flavor (unset) must still reference deepseek-* types")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+
+    # Explicit codex case
+    os.environ["CLAUDE_CODEX_FLAVOR"] = "codex"
+    try:
+        src = cw.wrapper_source_native()
+        expect("codex-worker" in src,
+               f"codex flavor (explicit) must still produce codex-worker; got: {src[:300]}")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+
+
 def main() -> int:
     test_remap_when_no_key()
     test_sentinel_inserted_after_meta_not_before()
@@ -206,6 +251,8 @@ def main() -> int:
     test_gateway_detected_via_base_url_no_port_file()
     test_fail_open_on_bad_input()
     test_wrapper_honours_sentinel()
+    test_wrapper_reasonix_flavor()
+    test_wrapper_codex_flavor_regression()
     print("PASS: workflow self-heal preflight + wrapper sentinel")
     return 0
 
