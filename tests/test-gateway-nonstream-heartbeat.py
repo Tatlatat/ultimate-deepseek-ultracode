@@ -162,10 +162,52 @@ def test_heartbeat_fires_before_slow_producer_returns():
         os.environ.pop("CLAUDE_CODEX_GATEWAY_STREAM_KEEPALIVE_SECONDS", None)
 
 
+def install_fake_reasonix(registry_model="claude-reasonix-flash"):
+    """Force a reasonix_cli registry entry and stub out run_reasonix_acp."""
+    orig_registry = gw.model_registry
+    orig_run_reasonix_acp = gw.run_reasonix_acp
+
+    def fake_registry():
+        return {registry_model: {"provider": "reasonix_cli"}}
+
+    def fake_run_reasonix_acp(prompt, config):
+        return ("PONG", {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "reasonix_cost_usd": None,
+            "reasonix_cache_pct": None,
+        })
+
+    gw.model_registry = fake_registry
+    gw.run_reasonix_acp = fake_run_reasonix_acp
+    return lambda: (setattr(gw, "model_registry", orig_registry),
+                    setattr(gw, "run_reasonix_acp", orig_run_reasonix_acp))
+
+
+def test_nonstream_reasonix_emits_heartbeat():
+    """A non-stream reasonix request must produce SSE heartbeats, NOT a JSON blob."""
+    restore = install_fake_reasonix()
+    try:
+        body = json.dumps({
+            "model": "claude-reasonix-flash", "max_tokens": 16,
+            "messages": [{"role": "user", "content": "say PONG"}],
+            # NOTE: no "stream": true  -> this is the path that must now go through heartbeat.
+        }).encode()
+        h = FakeHandler(body)
+        h.do_POST()
+        out = h.out
+        expect("event: message_start" in out,
+               f"non-stream reasonix must emit message_start (heartbeat path). Got:\n{out[:400]}")
+        expect("PONG" in out, f"final content must still arrive. Got:\n{out[:400]}")
+    finally:
+        restore()
+
+
 def main() -> int:
     test_nonstream_codex_emits_heartbeat()
     test_stream_true_still_works()
     test_heartbeat_fires_before_slow_producer_returns()
+    test_nonstream_reasonix_emits_heartbeat()
     print("PASS: gateway non-stream codex heartbeat")
     return 0
 

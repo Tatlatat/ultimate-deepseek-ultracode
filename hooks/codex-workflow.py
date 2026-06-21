@@ -178,15 +178,39 @@ def workflow_mode() -> str:
 
 
 def wrapper_source_native() -> str:
+    flavor = os.getenv("CLAUDE_CODEX_FLAVOR", "codex")
     return r"""
 // Injected by claude-codex: real Claude Code Workflow remains active, and
 // each workflow worker lane is routed to a native Codex/DeepSeek subagent type.
+const __claudeCodexFlavor = '""" + flavor + r"""'
 const __claudeCodexNativeAgentType = (opts = {}) => {
   const explicit = String(opts.agentType || '')
   // Self-heal override: when DEEPSEEK_API_KEY is absent the preflight sets this
   // flag so every lane (including deepseek-routed hints) runs via codex-cli,
   // which needs no key, instead of 401-ing on claude-deepseek-pro.
   const forceCodexOnly = Boolean(globalThis.__claudeCodexForceCodexOnly)
+
+  // Reasonix flavor: map lanes to reasonix-* agentTypes.
+  if (__claudeCodexFlavor === 'reasonix') {
+    if (explicit.startsWith('reasonix-')) return explicit
+    const hint = [opts.label, opts.phase, explicit].filter(Boolean).join(' ').toLowerCase()
+    if (hint.includes('security')) return 'reasonix-security'
+    if (hint.includes('verify') || hint.includes('test')) return 'reasonix-verify'
+    if (hint.includes('review')) return 'reasonix-reviewer'
+    if (
+      hint.includes('research') ||
+      hint.includes('database') ||
+      hint.includes(' deep') ||
+      hint.includes(':deep') ||
+      hint.includes('mcp') ||
+      hint.includes('extraction') ||
+      hint.includes('architecture') ||
+      hint.includes('infra') ||
+      hint.includes('devops')
+    ) return 'reasonix-research'
+    return 'reasonix-worker'
+  }
+
   if (explicit.startsWith('codex-')) return explicit
   if (explicit.startsWith('deepseek-')) return forceCodexOnly ? 'codex-worker' : explicit
 

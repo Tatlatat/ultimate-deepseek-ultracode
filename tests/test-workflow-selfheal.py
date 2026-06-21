@@ -197,6 +197,78 @@ console.log(JSON.stringify({off, on}));
     expect(res["on"] == "deepseek-architecture", f"sentinel-off should keep deepseek, got {res['on']}")
 
 
+def test_wrapper_reasonix_flavor():
+    """wrapper_source_native() must emit reasonix-* agentTypes when CLAUDE_CODEX_FLAVOR=reasonix."""
+    os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
+    try:
+        src = cw.wrapper_source_native()
+        expect("reasonix-worker" in src,
+               f"reasonix flavor must produce reasonix-worker; got: {src[:300]}")
+        expect("reasonix-security" in src,
+               "reasonix flavor must produce reasonix-security for security hints")
+        expect("reasonix-verify" in src,
+               "reasonix flavor must produce reasonix-verify for verify/test hints")
+        expect("reasonix-reviewer" in src,
+               "reasonix flavor must produce reasonix-reviewer for review hints")
+        expect("reasonix-research" in src,
+               "reasonix flavor must produce reasonix-research for deep/arch hints")
+        # The flavor const must be injected
+        expect("__claudeCodexFlavor = 'reasonix'" in src,
+               "flavor const must be injected as 'reasonix'")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+
+
+def test_wrapper_codex_flavor_regression():
+    """wrapper_source_native() must keep codex-worker/deepseek-* when flavor is unset or 'codex'."""
+    # Unset case
+    os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+    try:
+        src = cw.wrapper_source_native()
+        expect("codex-worker" in src,
+               f"codex flavor (unset) must still produce codex-worker; got: {src[:300]}")
+        expect("deepseek-" in src,
+               "codex flavor (unset) must still reference deepseek-* types")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+
+    # Explicit codex case
+    os.environ["CLAUDE_CODEX_FLAVOR"] = "codex"
+    try:
+        src = cw.wrapper_source_native()
+        expect("codex-worker" in src,
+               f"codex flavor (explicit) must still produce codex-worker; got: {src[:300]}")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+
+
+def test_reasonix_cli_check_in_reasonix_flavor():
+    """preflight() must populate checks['reasonix_cli'] when CLAUDE_CODEX_FLAVOR=reasonix.
+
+    Part 1: binary absent  -> present is False, ctx contains a reasonix self-heal note.
+    Part 2: binary present -> present is True.
+    """
+    os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
+    os.environ["REASONIX_BIN"] = "/nonexistent/reasonix-xyz"
+    try:
+        _, ctx, rep = sh.preflight(SCRIPT, "router")
+        expect("reasonix_cli" in rep["checks"], "reasonix_cli key missing from checks")
+        expect(rep["checks"]["reasonix_cli"]["present"] is False,
+               f"expected present=False for nonexistent binary, got: {rep['checks']['reasonix_cli']}")
+        expect("reasonix" in ctx.lower(),
+               f"expected reasonix self-heal note in ctx; got: {ctx!r}")
+
+        # Part 2: use 'sh' (POSIX shell) as a guaranteed-present binary.
+        os.environ["REASONIX_BIN"] = "sh"
+        _, _ctx2, rep2 = sh.preflight(SCRIPT, "router")
+        expect("reasonix_cli" in rep2["checks"], "reasonix_cli key missing from checks (present case)")
+        expect(rep2["checks"]["reasonix_cli"]["present"] is True,
+               f"expected present=True for 'sh' binary, got: {rep2['checks']['reasonix_cli']}")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+        os.environ.pop("REASONIX_BIN", None)
+
+
 def main() -> int:
     test_remap_when_no_key()
     test_sentinel_inserted_after_meta_not_before()
@@ -206,6 +278,9 @@ def main() -> int:
     test_gateway_detected_via_base_url_no_port_file()
     test_fail_open_on_bad_input()
     test_wrapper_honours_sentinel()
+    test_wrapper_reasonix_flavor()
+    test_wrapper_codex_flavor_regression()
+    test_reasonix_cli_check_in_reasonix_flavor()
     print("PASS: workflow self-heal preflight + wrapper sentinel")
     return 0
 

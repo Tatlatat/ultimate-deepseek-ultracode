@@ -14,9 +14,11 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -102,6 +104,12 @@ def model_registry() -> dict[str, JSON]:
             "base_url": env_first("CLAUDE_CODEX_DEEPSEEK_BASE_URL", "DEEPSEEK_BASE_URL", default="https://api.deepseek.com/v1"),
             "api_key": env_first("CLAUDE_CODEX_DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"),
             "max_tokens_param": os.getenv("CLAUDE_CODEX_DEEPSEEK_MAX_TOKENS_PARAM", "max_tokens"),
+        },
+        "claude-reasonix-flash": {
+            "display_name": os.getenv("CLAUDE_CODEX_REASONIX_DISPLAY_NAME", "claude-reasonix-flash"),
+            "provider": "reasonix_cli",
+            "target_model": env_first("CLAUDE_CODEX_REASONIX_MODEL", default="deepseek-v4-flash"),
+            "reasonix_bin": env_first("REASONIX_BIN", default="reasonix"),
         },
     }
 
@@ -399,6 +407,25 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
             "stop_sequence": None,
             "usage": usage,
         }
+
+    if config.get("provider") == "reasonix_cli":
+        messages = anthropic_messages_to_openai(payload)
+        prompt = openai_messages_to_prompt(messages, payload.get("tools"))
+        text, usage = run_reasonix_acp(prompt, config)
+        gateway_trace("reasonix_acp_response", model=requested_model,
+                      cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
+        ledger = env_first(
+            "CLAUDE_CODEX_REASONIX_COST_LEDGER",
+            default=str(Path(env_first("CLAUDE_CODEX_FLEET_HOME",
+                                       default=os.path.dirname(os.path.abspath(__file__)))) / "runtime" / "reasonix-cost.jsonl"),
+        )
+        append_reasonix_cost(
+            ledger, usage,
+            cwd=env_first("CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd()),
+            model=str(config.get("target_model") or ""),
+            claude_equiv=usage.get("reasonix_claude_equiv_usd"),
+        )
+        return anthropic_end_turn_response(requested_model, usage, text=text)
 
     api_key = str(config.get("api_key") or "")
     if not api_key:
@@ -1032,6 +1059,328 @@ def run_codex_cli(prompt: str, config: JSON) -> tuple[str, JSON]:
     return text, usage
 
 
+def append_reasonix_cost(ledger_path: str, usage: JSON, cwd: str = "", model: str = "",
+                         claude_equiv: float | None = None) -> None:
+    """Append one per-lane cost record to the session cost ledger (JSONL).
+
+    Fail-open: a broken/unwritable ledger path must never break a lane.
+    The reasonix CLI's own ~/.reasonix/usage.jsonl has session=null and no cwd,
+    so it can't attribute cost to a session/project — this ledger adds cwd + ts.
+    """
+    try:
+        record = {
+            "ts": time.time(),
+            "cost_usd": usage.get("reasonix_cost_usd"),
+            "claude_equiv_usd": claude_equiv,
+            "cache_pct": usage.get("reasonix_cache_pct"),
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "cwd": cwd,
+            "model": model,
+        }
+        path = Path(ledger_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def summarize_reasonix_cost(ledger_path: str) -> JSON:
+    """Aggregate the cost ledger into a summary dict. Missing/empty → zeros."""
+    lanes = 0
+    total = 0.0
+    claude_equiv = 0.0
+    in_tok = 0
+    out_tok = 0
+    cache_vals: list[float] = []
+    try:
+        with open(ledger_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                lanes += 1
+                c = rec.get("cost_usd")
+                if isinstance(c, (int, float)):
+                    total += float(c)
+                ce = rec.get("claude_equiv_usd")
+                if isinstance(ce, (int, float)):
+                    claude_equiv += float(ce)
+                if isinstance(rec.get("input_tokens"), int):
+                    in_tok += rec["input_tokens"]
+                if isinstance(rec.get("output_tokens"), int):
+                    out_tok += rec["output_tokens"]
+                cp = rec.get("cache_pct")
+                if isinstance(cp, (int, float)):
+                    cache_vals.append(float(cp))
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    avg_cache = round(sum(cache_vals) / len(cache_vals), 1) if cache_vals else 0.0
+    saved = claude_equiv - total
+    saved_pct = round(100.0 * saved / claude_equiv, 1) if claude_equiv > 0 else 0.0
+    return {
+        "lanes": lanes,
+        "total_usd": total,
+        "claude_equiv_usd": claude_equiv,
+        "saved_usd": saved,
+        "saved_pct": saved_pct,
+        "avg_cache_pct": avg_cache,
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "avg_per_lane_usd": round(total / lanes, 6) if lanes else 0.0,
+    }
+
+
+def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
+    import queue as _queue
+    reasonix_bin = str(config.get("reasonix_bin") or env_first("REASONIX_BIN", default="reasonix"))
+    model = str(config.get("target_model") or "deepseek-v4-flash")
+    effort = env_first("CLAUDE_CODEX_REASONIX_EFFORT", default="high")
+    budget = env_first("CLAUDE_CODEX_REASONIX_BUDGET", default="0.05")
+    timeout = float(env_first("CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "CODEX_FLEET_TIMEOUT_SECONDS", default="600"))
+    cwd = env_first("CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd())
+    max_attempts = max(1, env_int("CLAUDE_CODEX_GATEWAY_CODEX_MAX_ATTEMPTS", default=3))
+    semaphore = codex_cli_semaphore()
+
+    def _attempt() -> tuple[str, JSON]:
+        # acp writes per-turn usage+cost to the --transcript JSONL; that is the
+        # ONLY place the real cost/token counts are available (acp mode does NOT
+        # print a cost line on stderr the way `reasonix run` does). Use a fresh
+        # temp transcript per attempt and read it back after the run.
+        transcript_fd, transcript_path = tempfile.mkstemp(prefix="reasonix-acp-", suffix=".jsonl")
+        os.close(transcript_fd)
+        command = [
+            reasonix_bin, "acp",
+            "--dir", cwd,
+            "--yolo",
+            "-m", model,
+            "--effort", effort,
+            "--budget", budget,
+            "--transcript", transcript_path,
+        ]
+        try:
+            proc = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, bufsize=1, cwd=cwd,
+            )
+        except OSError as exc:
+            try:
+                os.unlink(transcript_path)
+            except Exception:
+                pass
+            raise GatewayError(502, "reasonix_acp_error", f"failed to start reasonix acp: {exc}")
+        out_q: _queue.Queue = _queue.Queue()
+        text_parts: list[str] = []
+        session_id = {"v": None}
+        prompt_done = {"v": False}
+        stop_reason = {"v": None}
+        captured: dict = {"v": None}
+
+        def _read_transcript_cost(path: str) -> dict | None:
+            # Poll the transcript for the assistant_final record (cost + usage),
+            # which reasonix flushes shortly AFTER stopReason. Returns a dict of
+            # {cost, claude_equiv, in_tok, out_tok, cache} or None if not yet present.
+            deadline = _time.monotonic() + 2.0
+            while True:
+                cost = claude_equiv = cache = in_tok = out_tok = None
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                rec = json.loads(line)
+                            except Exception:
+                                continue
+                            if isinstance(rec.get("cost"), (int, float)):
+                                cost = (cost or 0.0) + float(rec["cost"])
+                            if isinstance(rec.get("claudeEquivUsd"), (int, float)):
+                                claude_equiv = (claude_equiv or 0.0) + float(rec["claudeEquivUsd"])
+                            u = rec.get("usage")
+                            if isinstance(u, dict):
+                                if isinstance(u.get("prompt_tokens"), int):
+                                    in_tok = u["prompt_tokens"]
+                                if isinstance(u.get("completion_tokens"), int):
+                                    out_tok = u["completion_tokens"]
+                                hit = u.get("prompt_cache_hit_tokens")
+                                miss = u.get("prompt_cache_miss_tokens")
+                                if isinstance(hit, int) and isinstance(miss, int) and (hit + miss) > 0:
+                                    cache = round(100.0 * hit / (hit + miss), 1)
+                except Exception:
+                    pass
+                if cost is not None or _time.monotonic() > deadline:
+                    return {"cost": cost, "claude_equiv": claude_equiv,
+                            "in_tok": in_tok, "out_tok": out_tok, "cache": cache}
+                _time.sleep(0.1)
+
+        def send(obj: JSON) -> None:
+            assert proc.stdin is not None
+            proc.stdin.write(json.dumps(obj) + "\n")
+            proc.stdin.flush()
+
+        def reader() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    continue
+                out_q.put(msg)
+            out_q.put({"__eof__": True})
+
+        threading.Thread(target=reader, daemon=True).start()
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": 1, "clientCapabilities": {}}})
+        send({"jsonrpc": "2.0", "id": 2, "method": "session/new",
+              "params": {"cwd": cwd, "mcpServers": []}})
+
+        import time as _time
+        # FIX 1: bound the handshake phase so a wedged process can't hold a
+        # semaphore slot forever.  Resets to the full timeout once the
+        # session/prompt (id=3) has been sent.
+        deadline = _time.monotonic() + min(timeout, 60.0)
+        try:
+            while True:
+                try:
+                    msg = out_q.get(timeout=1.0)
+                except Exception:
+                    if _time.monotonic() > deadline:
+                        proc.kill()
+                        raise GatewayError(504, "reasonix_timeout", f"reasonix acp timed out after {timeout:g}s")
+                    continue
+                if msg.get("__eof__"):
+                    break
+                if msg.get("id") == 2 and "result" in msg:
+                    session_id["v"] = msg["result"].get("sessionId")
+                    if not session_id["v"]:
+                        proc.kill()
+                        raise GatewayError(502, "reasonix_acp_error", "session/new returned no sessionId")
+                    send({"jsonrpc": "2.0", "id": 3, "method": "session/prompt",
+                          "params": {"sessionId": session_id["v"],
+                                     "prompt": [{"type": "text", "text": prompt}]}})
+                    # Reset deadline for the full work phase now that handshake is done.
+                    deadline = _time.monotonic() + timeout
+                elif msg.get("method") == "session/update":
+                    upd = (msg.get("params") or {}).get("update") or {}
+                    if upd.get("sessionUpdate") == "agent_message_chunk":
+                        content = upd.get("content") or {}
+                        if isinstance(content, dict) and content.get("type") == "text":
+                            text_parts.append(content.get("text", ""))
+                elif msg.get("id") == 3 and "result" in msg:
+                    stop_reason["v"] = msg["result"].get("stopReason")
+                    prompt_done["v"] = True
+                    # Poll the transcript for the assistant_final cost record WHILE
+                    # the process is still alive — reasonix writes that record a
+                    # beat after stopReason, and reaping the process first (in the
+                    # finally below) loses it. captured["v"] holds the parsed result.
+                    captured["v"] = _read_transcript_cost(transcript_path)
+                    break
+                elif msg.get("id") == 3 and "error" in msg:
+                    proc.kill()
+                    raise GatewayError(502, "reasonix_acp_error", msg["error"].get("message", "session/prompt error"))
+
+        finally:
+            # Deterministic reap + pipe close on every exit path. Close OUR stdin
+            # first (signals EOF so reasonix can finish flushing its transcript and
+            # exit on its own), then give it a short grace period to exit cleanly
+            # BEFORE terminating. Terminating immediately killed reasonix mid-flush,
+            # which lost the cost/usage transcript record ~2/3 of the time.
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=2)  # graceful: let it flush transcript + exit
+            except Exception:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        pass
+            # Read stderr now that the process is dead (won't block).
+            # On error/exception paths this is a best-effort capture; the
+            # caller receives the GatewayError and we discard stderr_text.
+            try:
+                _stderr_capture = proc.stderr.read() if proc.stderr else ""
+            except Exception:
+                _stderr_capture = ""
+            # Close all Python-side pipe fds on every exit path.
+            for _stream in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    if _stream:
+                        _stream.close()
+                except Exception:
+                    pass
+
+        # _stderr_capture is kept only for error diagnostics; cost/usage come
+        # from the transcript JSONL below.
+        _ = _stderr_capture
+
+        # Cost/usage were parsed from the transcript WHILE the process was still
+        # alive (captured["v"]), because reasonix flushes the assistant_final cost
+        # record a beat after stopReason and the reap above would otherwise lose it.
+        # Fall back to a fresh read if that path didn't run (e.g. error exit).
+        parsed = captured["v"]
+        if parsed is None:
+            parsed = _read_transcript_cost(transcript_path) or {}
+        cost = parsed.get("cost")
+        claude_equiv = parsed.get("claude_equiv")
+        cache = parsed.get("cache")
+        in_tok = parsed.get("in_tok")
+        out_tok = parsed.get("out_tok")
+        try:
+            os.unlink(transcript_path)
+        except Exception:
+            pass
+
+        text = "".join(text_parts)
+        usage = {
+            "input_tokens": in_tok if in_tok is not None
+            else estimate_tokens({"messages": [{"role": "user", "content": prompt}]}),
+            "output_tokens": out_tok if out_tok is not None else max(1, len(text) // 4),
+            "reasonix_cost_usd": cost,
+            "reasonix_cache_pct": cache,
+            "reasonix_claude_equiv_usd": claude_equiv,
+        }
+        return text, usage
+
+    with semaphore:
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                gateway_trace("reasonix_acp_attempt", model=model, attempt=attempt)
+                return _attempt()
+            except GatewayError as exc:
+                last_exc = exc
+                if exc.error_type == "reasonix_timeout":
+                    raise
+        if last_exc:
+            raise last_exc
+        raise GatewayError(502, "reasonix_acp_error", "reasonix acp produced no result")
+
+
 def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSON) -> JSON:
     if os.getenv("CLAUDE_CODEX_GATEWAY_MOCK", "").lower() in {"1", "true", "yes", "on"}:
         return mock_openai_chat_response(payload, requested_model)
@@ -1238,7 +1587,8 @@ class Handler(BaseHTTPRequestHandler):
                     # stream=true and died silently at 180s on the old blocking blob
                     # path. The Claude Code client parses the SSE stream fine even
                     # when it did not request stream=true.
-                    if config.get("provider") == "codex_cli":
+                    provider = config.get("provider")
+                    if provider in ("codex_cli", "reasonix_cli"):
                         self.send_sse_response_lazy(
                             lambda: call_openai_compatible(payload, model, config),
                             model,

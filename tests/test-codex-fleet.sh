@@ -77,6 +77,17 @@ grep -q "qwen36-mlx" "$ROOT/system-prompt.md" || fail "prompt must mention the l
 grep -q "Claude Code Router" "$ROOT/system-prompt.md" || fail "prompt must describe Claude Code Router mode"
 grep -q "claude-codex router" "$ROOT/system-prompt.md" || fail "prompt must document explicit router activation"
 
+RX_PROMPT="$ROOT/system-prompt-reasonix.md"
+[[ -f "$RX_PROMPT" ]] || fail "missing reasonix system prompt"
+grep -q "claude-reasonix-flash" "$RX_PROMPT" || fail "reasonix prompt must name the flash agent"
+grep -q "atomic" "$RX_PROMPT" || fail "reasonix prompt must teach atomic-task decomposition"
+grep -q "unlimited" "$RX_PROMPT" || fail "reasonix prompt must state agent count is unlimited"
+grep -q "web search" "$RX_PROMPT" || fail "reasonix prompt must mention built-in web search"
+grep -qi "Agent-first policy\|Reasonix-first" "$RX_PROMPT" || fail "reasonix prompt must state the Reasonix-first agent policy"
+grep -qi "ALWAYS delegate" "$RX_PROMPT" || fail "reasonix prompt must list always-delegate task types"
+grep -qi "Claude keeps these" "$RX_PROMPT" || fail "reasonix prompt must list what Claude keeps doing"
+grep -qi "look at the agent first\|agent does it" "$RX_PROMPT" || fail "reasonix prompt must teach look-at-agent-first decision"
+
 python3 - "$ROOT/bridge-settings.json" "$WORKFLOW_HOOK" <<'PY'
 import json
 import sys
@@ -1450,3 +1461,29 @@ python3 "$ROOT/tests/test-workflow-selfheal.py" || fail "workflow self-heal regr
 python3 "$ROOT/tests/test-gateway-nonstream-heartbeat.py" || fail "gateway non-stream heartbeat regression"
 
 python3 "$ROOT/tests/test-ccr-proxy-streaming.py" || fail "ccr-proxy SSE streaming regression"
+
+# Verify the launcher itself wires the reasonix flavor via basename/$0 detection
+LAUNCHER_BIN="$HOME/.local/bin/claude-codex"
+[[ -f "$LAUNCHER_BIN" ]] || fail "launcher not found at $LAUNCHER_BIN"
+grep -Eq 'claude-reasonix\)\s*CLAUDE_CODEX_FLAVOR="?reasonix"?' "$LAUNCHER_BIN" || fail "launcher must map claude-reasonix name to CLAUDE_CODEX_FLAVOR=reasonix"
+grep -q 'claude-reasonix-flash' "$LAUNCHER_BIN" || fail "launcher reasonix flavor must force claude-reasonix-flash"
+[[ -L "$HOME/.local/bin/claude-reasonix" ]] || fail "claude-reasonix must be a symlink"
+
+CLAUDE_CODEX_FLAVOR=reasonix python3 - "$GATEWAY" <<'PY' || fail "reasonix flavor must expose claude-reasonix-flash"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1])
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+reg = g.model_registry()
+assert "claude-reasonix-flash" in reg, list(reg)
+assert reg["claude-reasonix-flash"]["provider"] == "reasonix_cli"
+PY
+
+python3 "$ROOT/tests/test-reasonix-acp.py" || fail "reasonix acp driver regression"
+
+if [[ "${CLAUDE_CODEX_REASONIX_E2E:-0}" == "1" ]]; then
+  bash "$ROOT/tests/test-reasonix-e2e.sh" || fail "reasonix e2e"
+else
+  echo "SKIP: reasonix e2e (set CLAUDE_CODEX_REASONIX_E2E=1 to run)"
+fi
+
+python3 "$ROOT/tests/test-reasonix-cost-ledger.py" || fail "reasonix cost ledger regression"

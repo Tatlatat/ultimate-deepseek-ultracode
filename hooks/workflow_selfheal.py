@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import time
 import urllib.error
 import urllib.request
@@ -266,6 +267,17 @@ def preflight(script: str, mode: str) -> tuple[str, str, dict]:
                 )
         else:
             report["checks"]["deepseek_key"] = {"present": _deepseek_key_present()}
+
+        if os.getenv("CLAUDE_CODEX_FLAVOR") == "reasonix":
+            reasonix_present = bool(shutil.which(os.getenv("REASONIX_BIN", "reasonix")))
+            report["checks"]["reasonix_cli"] = {"present": reasonix_present}
+            if not reasonix_present:
+                notes.append(
+                    "SELF-HEAL: Reasonix CLI not found in PATH "
+                    f"(looked for {os.getenv('REASONIX_BIN', 'reasonix')!r}). "
+                    "Reasonix worker lanes will fail. Action: install and log in to "
+                    "the Reasonix CLI (`reasonix login`), then restart claude-codex."
+                )
     except Exception as exc:  # noqa: BLE001 - fail open, never block the workflow
         report["error"] = repr(exc)
 
