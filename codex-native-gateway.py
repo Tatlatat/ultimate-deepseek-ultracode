@@ -1064,7 +1064,6 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
         "-m", model,
         "--effort", effort,
         "--budget", budget,
-        "--no-config",
     ]
 
     def _attempt() -> tuple[str, JSON]:
