@@ -83,6 +83,10 @@ grep -q "claude-reasonix-flash" "$RX_PROMPT" || fail "reasonix prompt must name 
 grep -q "atomic" "$RX_PROMPT" || fail "reasonix prompt must teach atomic-task decomposition"
 grep -q "unlimited" "$RX_PROMPT" || fail "reasonix prompt must state agent count is unlimited"
 grep -q "web search" "$RX_PROMPT" || fail "reasonix prompt must mention built-in web search"
+grep -qi "Agent-first policy\|Reasonix-first" "$RX_PROMPT" || fail "reasonix prompt must state the Reasonix-first agent policy"
+grep -qi "ALWAYS delegate" "$RX_PROMPT" || fail "reasonix prompt must list always-delegate task types"
+grep -qi "Claude keeps these" "$RX_PROMPT" || fail "reasonix prompt must list what Claude keeps doing"
+grep -qi "look at the agent first\|agent does it" "$RX_PROMPT" || fail "reasonix prompt must teach look-at-agent-first decision"
 
 python3 - "$ROOT/bridge-settings.json" "$WORKFLOW_HOOK" <<'PY'
 import json
