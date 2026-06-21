@@ -242,6 +242,33 @@ def test_wrapper_codex_flavor_regression():
         os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
 
 
+def test_reasonix_cli_check_in_reasonix_flavor():
+    """preflight() must populate checks['reasonix_cli'] when CLAUDE_CODEX_FLAVOR=reasonix.
+
+    Part 1: binary absent  -> present is False, ctx contains a reasonix self-heal note.
+    Part 2: binary present -> present is True.
+    """
+    os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
+    os.environ["REASONIX_BIN"] = "/nonexistent/reasonix-xyz"
+    try:
+        _, ctx, rep = sh.preflight(SCRIPT, "router")
+        expect("reasonix_cli" in rep["checks"], "reasonix_cli key missing from checks")
+        expect(rep["checks"]["reasonix_cli"]["present"] is False,
+               f"expected present=False for nonexistent binary, got: {rep['checks']['reasonix_cli']}")
+        expect("reasonix" in ctx.lower(),
+               f"expected reasonix self-heal note in ctx; got: {ctx!r}")
+
+        # Part 2: use 'sh' (POSIX shell) as a guaranteed-present binary.
+        os.environ["REASONIX_BIN"] = "sh"
+        _, _ctx2, rep2 = sh.preflight(SCRIPT, "router")
+        expect("reasonix_cli" in rep2["checks"], "reasonix_cli key missing from checks (present case)")
+        expect(rep2["checks"]["reasonix_cli"]["present"] is True,
+               f"expected present=True for 'sh' binary, got: {rep2['checks']['reasonix_cli']}")
+    finally:
+        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+        os.environ.pop("REASONIX_BIN", None)
+
+
 def main() -> int:
     test_remap_when_no_key()
     test_sentinel_inserted_after_meta_not_before()
@@ -253,6 +280,7 @@ def main() -> int:
     test_wrapper_honours_sentinel()
     test_wrapper_reasonix_flavor()
     test_wrapper_codex_flavor_regression()
+    test_reasonix_cli_check_in_reasonix_flavor()
     print("PASS: workflow self-heal preflight + wrapper sentinel")
     return 0
 
