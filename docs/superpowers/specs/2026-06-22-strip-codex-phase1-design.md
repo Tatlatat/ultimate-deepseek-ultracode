@@ -37,7 +37,9 @@ The central, highest-risk file. Remove in this order; run `tests/test-reasonix-a
 
 **G1 — `model_registry()`:** delete the `claude-codex-pro` and `claude-deepseek-pro` entries and the `codex_provider`/`codex_backend` locals; keep only `claude-reasonix-flash`. After G1, any non-reasonix model is "unknown" — this is the kill switch.
 
-**G2 — delete codex-engine functions** (no caller remains after G1): `run_codex_cli`, `codex_cli_semaphore`, `retryable_codex_cli_failure`, `extract_codex_final_text`, `mock_openai_chat_response`, `last_openai_user_text`, `provider_openai_chat_payload`, `openai_has_successful_structured_output`, `openai_tool_call_response`, `openai_stop_response`. (Verify each truly has no remaining caller in the reasonix path before deleting — grep the symbol; if the only callers were codex branches, delete.)
+**G2 — delete codex-engine functions** (no caller remains after G1's codex-branch removal): `run_codex_cli`, `retryable_codex_cli_failure`, `extract_codex_final_text`, `mock_openai_chat_response`, `last_openai_user_text`, `provider_openai_chat_payload`, `openai_has_successful_structured_output`, `openai_tool_call_response`, `openai_stop_response`. (Verify each truly has no remaining caller in the reasonix path before deleting — grep the symbol; if the only callers were codex branches, delete.)
+
+> **KEEP `codex_cli_semaphore`** — despite its name it is SHARED: `run_reasonix_acp` (L1163) calls it to bound reasonix acp concurrency. Verified by grep (callers: `run_codex_cli` L970 AND `run_reasonix_acp` L1163). Deleting it would break reasonix. Its rename to a neutral name is Phase 2.
 
 **G3 — prune branches in the two large `call_*` functions:**
 - `call_openai_compatible`: delete the `if config.get("provider") == "codex_cli":` branch and the api_key/deepseek-HTTP path; keep the `reasonix_cli` branch and the shared head of the function.
