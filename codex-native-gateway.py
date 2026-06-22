@@ -1087,7 +1087,7 @@ class Handler(BaseHTTPRequestHandler):
                     # codex_cli AND reasonix_cli run blocking subprocesses that can
                     # exceed the 180s workflow watchdog; both need the heartbeat-lazy
                     # SSE path so a lane is not killed mid-run with no visible progress.
-                    if provider in ("codex_cli", "reasonix_cli"):
+                    if provider == "reasonix_cli":
                         self.send_openai_sse_response_lazy(
                             lambda: call_openai_chat_completion(payload, model, config)
                         )
@@ -1117,7 +1117,7 @@ class Handler(BaseHTTPRequestHandler):
                     # path. The Claude Code client parses the SSE stream fine even
                     # when it did not request stream=true.
                     provider = config.get("provider")
-                    if provider in ("codex_cli", "reasonix_cli"):
+                    if provider == "reasonix_cli":
                         self.send_sse_response_lazy(
                             lambda: call_openai_compatible(payload, model, config),
                             model,
