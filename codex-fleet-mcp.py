@@ -63,13 +63,6 @@ def _reasonix_acp_fn():
     return getattr(mod, "run_reasonix_acp", None) if mod is not None else None
 
 
-def default_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def truncate(text: str, limit: int) -> tuple[str, bool]:
     if limit <= 0 or len(text) <= limit:
         return text, False
