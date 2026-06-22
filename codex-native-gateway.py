@@ -112,8 +112,22 @@ def text_from_content(content: Any) -> str:
     return str(content)
 
 
+_BILLING_HEADER_RE = re.compile(r"^x-anthropic-billing-header:[^\n]*\n?", re.MULTILINE)
+
+
+def normalize_prefix(text: str) -> str:
+    """Strip per-request volatile lines from the START of the system prompt so the
+    prefix is byte-stable across lanes/sessions and DeepSeek's prompt cache can
+    reuse it. The `x-anthropic-billing-header: cc_version=...XXX; ...` line carries
+    a rotating version segment (measured: 9d6/94e/ef4/bcd across sessions) at the
+    very first bytes, which otherwise busts the cache for the whole leading block.
+    It is pure telemetry (version/entrypoint/is_subagent) — reasonix never needs
+    it — so removing it is safe and lossless for the worker task."""
+    return _BILLING_HEADER_RE.sub("", text)
+
+
 def anthropic_system_to_text(system: Any) -> str:
-    return text_from_content(system)
+    return normalize_prefix(text_from_content(system))
 
 
 def anthropic_messages_to_openai(payload: JSON) -> list[JSON]:
