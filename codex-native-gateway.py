@@ -1141,6 +1141,19 @@ def summarize_reasonix_cost(ledger_path: str) -> JSON:
 def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     import queue as _queue
     reasonix_bin = str(config.get("reasonix_bin") or env_first("REASONIX_BIN", default="reasonix"))
+    # reasonix is a Node CLI whose shebang is `env node`. If the gateway was
+    # launched with a PATH that lacks the node directory (the fnm multishell dir
+    # that also holds the reasonix bin), the spawn dies with
+    # "env: node: No such file or directory" and reasonix produces no output —
+    # every workflow lane then returns empty text. Prepend the reasonix bin's
+    # own directory (which contains node) to the child PATH so `env node`
+    # resolves regardless of how the gateway itself was started.
+    reasonix_env = dict(os.environ)
+    _bin_dir = os.path.dirname(os.path.abspath(reasonix_bin)) if os.path.sep in reasonix_bin else ""
+    if _bin_dir and os.path.exists(os.path.join(_bin_dir, "node")):
+        _cur_path = reasonix_env.get("PATH", "")
+        if _bin_dir not in _cur_path.split(os.pathsep):
+            reasonix_env["PATH"] = _bin_dir + (os.pathsep + _cur_path if _cur_path else "")
     model = str(config.get("target_model") or "deepseek-v4-flash")
     effort = env_first("CLAUDE_CODEX_REASONIX_EFFORT", default="high")
     budget = env_first("CLAUDE_CODEX_REASONIX_BUDGET", default="0.05")
@@ -1169,6 +1182,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
             proc = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, bufsize=1, cwd=cwd,
+                env=reasonix_env,
             )
         except OSError as exc:
             try:
@@ -1454,6 +1468,50 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
             },
         }
 
+    if config.get("provider") == "reasonix_cli":
+        # CCR routes every workflow subagent lane through /v1/chat/completions,
+        # which lands here. Without this branch reasonix_cli fell through to the
+        # api_key check below and 401'd with "needs an API key" — the real cause
+        # of "Not logged in" on every workflow lane. Mirror the /v1/messages
+        # reasonix path (run_reasonix_acp + cost ledger) but emit OpenAI shape.
+        messages = payload.get("messages") or []
+        normalized = [item for item in messages if isinstance(item, dict)]
+        prompt = openai_messages_to_prompt(normalized, payload.get("tools"))
+        text, usage = run_reasonix_acp(prompt, config)
+        gateway_trace("reasonix_acp_openai_response", model=requested_model,
+                      cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
+        ledger = env_first(
+            "CLAUDE_CODEX_REASONIX_COST_LEDGER",
+            default=str(Path(env_first("CLAUDE_CODEX_FLEET_HOME",
+                                       default=os.path.dirname(os.path.abspath(__file__)))) / "runtime" / "reasonix-cost.jsonl"),
+        )
+        append_reasonix_cost(
+            ledger, usage,
+            cwd=env_first("CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd()),
+            model=str(config.get("target_model") or ""),
+            claude_equiv=usage.get("reasonix_claude_equiv_usd"),
+        )
+        prompt_tokens = int(usage.get("prompt_tokens") or estimate_tokens(prompt))
+        completion_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
+        return {
+            "id": f"chatcmpl_{uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": requested_model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": text},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
     api_key = str(config.get("api_key") or "")
     if not api_key:
         raise GatewayError(
@@ -1556,9 +1614,13 @@ class Handler(BaseHTTPRequestHandler):
                 registry = model_registry()
                 if model not in registry:
                     raise GatewayError(400, "invalid_request_error", f"unknown model: {model}")
+                config = registry[model]
+                provider = config.get("provider")
                 if payload.get("stream"):
-                    config = registry[model]
-                    if config.get("provider") == "codex_cli":
+                    # codex_cli AND reasonix_cli run blocking subprocesses that can
+                    # exceed the 180s workflow watchdog; both need the heartbeat-lazy
+                    # SSE path so a lane is not killed mid-run with no visible progress.
+                    if provider in ("codex_cli", "reasonix_cli"):
                         self.send_openai_sse_response_lazy(
                             lambda: call_openai_chat_completion(payload, model, config)
                         )
@@ -1566,7 +1628,7 @@ class Handler(BaseHTTPRequestHandler):
                         response = call_openai_chat_completion(payload, model, config)
                         self.send_openai_sse_response(response)
                 else:
-                    response = call_openai_chat_completion(payload, model, registry[model])
+                    response = call_openai_chat_completion(payload, model, config)
                     self.send_json(200, response)
                 return
             if path == "/v1/messages/count_tokens":
