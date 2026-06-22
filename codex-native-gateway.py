@@ -948,6 +948,46 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
             "reasonix_cache_pct": cache,
             "reasonix_claude_equiv_usd": claude_equiv,
         }
+        # Prefix-cache diagnostics (opt-in via CLAUDE_CODEX_GATEWAY_PREFIX_TRACE).
+        # Logs a rolling sequence of (hash of prompt's first 4k chars, hash of
+        # first 32k, full length, cache%) per lane so we can tell post-hoc whether
+        # low-cache lanes share a long common prefix with earlier lanes (a
+        # prompt-ORDER problem we can fix by stabilising the prefix) or have a
+        # genuinely novel prefix (unavoidable cold start). Append-only JSONL; no
+        # behavior change. The prompt text itself is NOT logged, only hashes.
+        if os.getenv("CLAUDE_CODEX_GATEWAY_PREFIX_TRACE", "").lower() in {"1", "true", "yes", "on"}:
+            try:
+                import hashlib
+                pfx4 = hashlib.sha1(prompt[:4096].encode("utf-8", "ignore")).hexdigest()[:12]
+                pfx32 = hashlib.sha1(prompt[:32768].encode("utf-8", "ignore")).hexdigest()[:12]
+                # Per-4k-chunk hashes so we can find WHERE two same-family lanes
+                # diverge (the chunk index where their hash sequences first differ),
+                # and a short text sample of each chunk's HEAD so we can classify the
+                # divergent region as source-code (e.g. starts with "def "/"import "/
+                # "class "/file-path lines — not shareable) vs an instruction/template
+                # block (shareable, just ordered late). Samples are 80 chars, head of
+                # the chunk only — enough to classify, not to leak the full prompt.
+                chunks = [prompt[i:i + 4096] for i in range(0, min(len(prompt), 131072), 4096)]
+                chunk_hashes = [hashlib.sha1(c.encode("utf-8", "ignore")).hexdigest()[:10] for c in chunks]
+                chunk_samples = [c[:80] for c in chunks]
+                rec = {
+                    "ts": _time.time(),
+                    "prefix4k": pfx4,
+                    "prefix32k": pfx32,
+                    "prompt_len": len(prompt),
+                    "cache_pct": cache,
+                    "in_tok": in_tok,
+                    "chunk_hashes": chunk_hashes,
+                    "chunk_samples": chunk_samples,
+                }
+                ledger_dir = Path(env_first(
+                    "CLAUDE_CODEX_FLEET_HOME",
+                    default=os.path.dirname(os.path.abspath(__file__)))) / "runtime"
+                ledger_dir.mkdir(parents=True, exist_ok=True)
+                with open(ledger_dir / "prefix-trace.jsonl", "a", encoding="utf-8") as _pf:
+                    _pf.write(json.dumps(rec) + "\n")
+            except Exception:
+                pass
         return text, usage
 
     with semaphore:
