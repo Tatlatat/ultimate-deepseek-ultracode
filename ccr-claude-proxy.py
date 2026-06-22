@@ -368,13 +368,7 @@ class Server(ThreadingHTTPServer):
         self.alias_model_ids = alias_model_ids
         self.direct_alias_model_ids = direct_alias_model_ids
         self.passthrough_main = passthrough_main
-        self.forced_subagent_model = (
-            "claude-codex-pro"
-            if "claude-codex-pro" in alias_model_ids
-            else alias_model_ids[0]
-            if alias_model_ids
-            else ""
-        )
+        self.forced_subagent_model = alias_model_ids[0] if alias_model_ids else ""
 
 
 def parse_models(raw: str) -> list[str]:
