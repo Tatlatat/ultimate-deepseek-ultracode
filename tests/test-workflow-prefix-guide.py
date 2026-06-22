@@ -23,9 +23,13 @@ PAYLOAD = {
 }
 
 
-def run_hook(env_overrides: dict[str, str]) -> dict:
+def run_hook(env_overrides: dict) -> dict:
     env = dict(os.environ)
-    env.update(env_overrides)
+    for k, v in env_overrides.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
     # Force a deterministic mode so the test is independent of the launcher env.
     env.setdefault("CLAUDE_CODEX_WORKFLOW_MODE", "native")
     proc = subprocess.run(
@@ -65,9 +69,9 @@ def test_guide_absent_when_off():
 
 
 def test_guide_default_on():
-    env = dict(os.environ)
-    env.pop("CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE", None)
-    out = run_hook({})  # gate unset → default on
+    # Force the key absent so the subprocess sees it unset (default → on),
+    # regardless of what is in the real environment.
+    out = run_hook({"CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE": None})
     expect("PROMPT-CACHE NOTE" in _ctx(out), "guide must default to on when env unset")
 
 
