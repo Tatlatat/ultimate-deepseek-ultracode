@@ -139,120 +139,61 @@ async def run_one_task(task: dict[str, Any], index: int, batch_id: str, max_outp
     stdout_path = str(log_prefix) + ".stdout.txt"
     stderr_path = str(log_prefix) + ".stderr.txt"
 
-    # Reasonix flavor: run the worker through reasonix acp (NOT codex exec), via the
-    # gateway's tested ACP driver. This is what makes single subagents in a
-    # claude-reasonix session actually run on Reasonix instead of Codex.
-    if fleet_flavor() == "reasonix":
-        rx = _reasonix_acp_fn()
-        if rx is not None:
-            prompt = str(task.get("prompt") or task.get("task") or "")
-            if not prompt.strip():
-                return {"index": index, "title": title, "ok": False,
-                        "error": "task prompt is required",
-                        "duration_ms": int((time.monotonic() - started) * 1000)}
-            cwd = task.get("cwd")
-            cwd_text = str(cwd) if cwd else os.getcwd()
-            model = task_value(task, "model", "CLAUDE_CODEX_REASONIX_MODEL", "deepseek-v4-flash")
-            config = {"reasonix_bin": os.getenv("REASONIX_BIN", "reasonix"),
-                      "target_model": model}
-            # run_reasonix_acp reads cwd from CLAUDE_CODEX_GATEWAY_CODEX_CWD.
-            prev_cwd = os.environ.get("CLAUDE_CODEX_GATEWAY_CODEX_CWD")
-            os.environ["CLAUDE_CODEX_GATEWAY_CODEX_CWD"] = cwd_text
-            try:
-                loop = asyncio.get_running_loop()
-                text, usage = await loop.run_in_executor(None, rx, prompt, config)
-            except Exception as exc:
-                return {"index": index, "title": title, "ok": False,
-                        "error": f"reasonix acp failed: {exc}",
-                        "duration_ms": int((time.monotonic() - started) * 1000)}
-            finally:
-                if prev_cwd is None:
-                    os.environ.pop("CLAUDE_CODEX_GATEWAY_CODEX_CWD", None)
-                else:
-                    os.environ["CLAUDE_CODEX_GATEWAY_CODEX_CWD"] = prev_cwd
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            Path(stdout_path).write_text(text or "", encoding="utf-8")
-            # Record the lane in the per-session cost ledger so `claude-reasonix cost`
-            # counts MCP-dispatched subagents too (same ledger as gateway lanes).
-            try:
-                gw = _reasonix_gateway_module()
-                ledger = os.getenv("CLAUDE_CODEX_REASONIX_COST_LEDGER",
-                                   str(LOG_DIR.parent / "reasonix-cost.jsonl"))
-                if gw is not None and hasattr(gw, "append_reasonix_cost"):
-                    gw.append_reasonix_cost(ledger, usage, cwd=cwd_text, model=model,
-                                            claude_equiv=usage.get("reasonix_claude_equiv_usd"))
-            except Exception:
-                pass
-            preview, truncated = truncate(text or "", max_output_chars)
-            return {
-                "index": index, "title": title, "ok": True, "exit_code": 0,
-                "engine": "reasonix", "model": model, "cwd": cwd_text,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-                "stdout": preview, "stdout_truncated": truncated,
-                "stdout_log": stdout_path,
-                "reasonix_cost_usd": usage.get("reasonix_cost_usd"),
-                "reasonix_cache_pct": usage.get("reasonix_cache_pct"),
-                "input_tokens": usage.get("input_tokens"),
-                "output_tokens": usage.get("output_tokens"),
-            }
-
+    # Always dispatch through reasonix acp via the gateway's tested ACP driver.
+    rx = _reasonix_acp_fn()
+    if rx is None:
+        return {"index": index, "title": title, "ok": False,
+                "error": "reasonix acp unavailable: gateway module not importable",
+                "duration_ms": int((time.monotonic() - started) * 1000)}
+    prompt = str(task.get("prompt") or task.get("task") or "")
+    if not prompt.strip():
+        return {"index": index, "title": title, "ok": False,
+                "error": "task prompt is required",
+                "duration_ms": int((time.monotonic() - started) * 1000)}
+    cwd = task.get("cwd")
+    cwd_text = str(cwd) if cwd else os.getcwd()
+    model = task_value(task, "model", "CLAUDE_CODEX_REASONIX_MODEL", "deepseek-v4-flash")
+    config = {"reasonix_bin": os.getenv("REASONIX_BIN", "reasonix"),
+              "target_model": model}
+    # run_reasonix_acp reads cwd from CLAUDE_CODEX_GATEWAY_CODEX_CWD.
+    prev_cwd = os.environ.get("CLAUDE_CODEX_GATEWAY_CODEX_CWD")
+    os.environ["CLAUDE_CODEX_GATEWAY_CODEX_CWD"] = cwd_text
     try:
-        command, cwd, prompt = build_codex_command(task)
+        loop = asyncio.get_running_loop()
+        text, usage = await loop.run_in_executor(None, rx, prompt, config)
     except Exception as exc:
-        return {
-            "index": index,
-            "title": title,
-            "ok": False,
-            "error": str(exc),
-            "duration_ms": int((time.monotonic() - started) * 1000),
-        }
-
-    timeout = int(task.get("timeout_seconds") or DEFAULT_TIMEOUT)
-
+        return {"index": index, "title": title, "ok": False,
+                "error": f"reasonix acp failed: {exc}",
+                "duration_ms": int((time.monotonic() - started) * 1000)}
+    finally:
+        if prev_cwd is None:
+            os.environ.pop("CLAUDE_CODEX_GATEWAY_CODEX_CWD", None)
+        else:
+            os.environ["CLAUDE_CODEX_GATEWAY_CODEX_CWD"] = prev_cwd
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    Path(stdout_path).write_text(text or "", encoding="utf-8")
+    # Record the lane in the per-session cost ledger so `claude-reasonix cost`
+    # counts MCP-dispatched subagents too (same ledger as gateway lanes).
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(prompt.encode("utf-8")),
-            timeout=timeout,
-        )
-        exit_code = process.returncode
-    except asyncio.TimeoutError:
-        try:
-            process.kill()
-        except Exception:
-            pass
-        stdout_bytes, stderr_bytes = b"", f"Timed out after {timeout} seconds".encode("utf-8")
-        exit_code = 124
-    except Exception as exc:
-        stdout_bytes, stderr_bytes = b"", str(exc).encode("utf-8")
-        exit_code = 1
-
-    stdout = stdout_bytes.decode("utf-8", errors="replace")
-    stderr = stderr_bytes.decode("utf-8", errors="replace")
-    Path(stdout_path).write_text(stdout, encoding="utf-8")
-    Path(stderr_path).write_text(stderr, encoding="utf-8")
-    stdout_preview, stdout_truncated = truncate(stdout, max_output_chars)
-    stderr_preview, stderr_truncated = truncate(stderr, max_output_chars)
-
+        gw = _reasonix_gateway_module()
+        ledger = os.getenv("CLAUDE_CODEX_REASONIX_COST_LEDGER",
+                           str(LOG_DIR.parent / "reasonix-cost.jsonl"))
+        if gw is not None and hasattr(gw, "append_reasonix_cost"):
+            gw.append_reasonix_cost(ledger, usage, cwd=cwd_text, model=model,
+                                    claude_equiv=usage.get("reasonix_claude_equiv_usd"))
+    except Exception:
+        pass
+    preview, truncated = truncate(text or "", max_output_chars)
     return {
-        "index": index,
-        "title": title,
-        "ok": exit_code == 0,
-        "exit_code": exit_code,
+        "index": index, "title": title, "ok": True, "exit_code": 0,
+        "engine": "reasonix", "model": model, "cwd": cwd_text,
         "duration_ms": int((time.monotonic() - started) * 1000),
-        "cwd": cwd,
-        "command": command[:2] + ["..."],
-        "stdout": stdout_preview,
-        "stderr": stderr_preview,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
+        "stdout": preview, "stdout_truncated": truncated,
         "stdout_log": stdout_path,
-        "stderr_log": stderr_path,
+        "reasonix_cost_usd": usage.get("reasonix_cost_usd"),
+        "reasonix_cache_pct": usage.get("reasonix_cache_pct"),
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
     }
 
 
