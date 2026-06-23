@@ -189,6 +189,22 @@ def should_force_fallback(prompt: str) -> bool:
         return _LANE_COUNTS.get(key, 0) >= limit
 
 
+def clear_lane_count(prompt: str) -> None:
+    """Reset a prefix-family's attempt count after a lane of that family SUCCEEDS
+    (produced parseable output). The loop-breaker counts attempts per prefix-family,
+    so without this a family that ever accumulated MAX_LANE_RETRIES attempts across
+    the session would force the schema-fallback on every later same-family lane that
+    narrates once — even fresh healthy lanes that would have succeeded on a retry. A
+    success proves the family is not stuck looping, so clear it. (Found by the bench
+    review lanes auditing the gateway.)"""
+    if env_first("CLAUDE_CODEX_GATEWAY_LANE_RESET_ON_SUCCESS",
+                 default="1").lower() not in {"1", "true", "yes", "on"}:
+        return  # kill-switch: keep legacy monotonic (never-reset) behavior
+    key = prefix_prime_key(prompt)
+    with _LANE_LOCK:
+        _LANE_COUNTS.pop(key, None)
+
+
 def prefix_prime_key(prompt: str) -> str:
     """Group lanes for the prime gate by hashing only the LEADING head of the
     prompt (the part lanes actually share), NOT the whole prompt. Measured: real
@@ -550,6 +566,10 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
                 pass
         if structured_tool:
             tool_input = parse_json_object_from_text(text)
+            if tool_input is not None:
+                # Real parseable output: this family is NOT stuck looping, so reset its
+                # attempt count (otherwise a past loop poisons fresh healthy lanes).
+                clear_lane_count(prompt)
             if tool_input is None:
                 # DeepSeek sometimes narrates ("results returned via StructuredOutput")
                 # instead of emitting JSON. When the caller FORCED this tool via
@@ -1653,6 +1673,8 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
                 pass
         if structured_tool:
             tool_input = parse_json_object_from_text(text)
+            if tool_input is not None:
+                clear_lane_count(prompt)  # real output -> family not looping, reset count
             if tool_input is None and (_tool_choice_forces(payload, structured_tool) or should_force_fallback(prompt)):
                 # Forced tool but the model narrated instead of emitting JSON, OR the
                 # lane looped past the retry limit — synthesize a schema-valid object
