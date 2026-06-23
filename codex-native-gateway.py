@@ -1290,6 +1290,20 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     # Prefix-prime gate: the first lane of a shared-prefix burst warms DeepSeek's
     # cache alone; later lanes wait (bounded) for that warm-up, then run together.
     is_primer, prime_gate = acquire_prime_role(prompt)
+    if os.getenv("CLAUDE_CODEX_GATEWAY_PREFIX_TRACE", "").lower() in {"1", "true", "yes", "on"}:
+        try:
+            _pdir = Path(env_first("CLAUDE_CODEX_FLEET_HOME",
+                default=os.path.dirname(os.path.abspath(__file__)))) / "runtime"
+            _pdir.mkdir(parents=True, exist_ok=True)
+            with open(_pdir / "prime-trace.jsonl", "a", encoding="utf-8") as _pf:
+                _pf.write(json.dumps({
+                    "ts": _time.time(),
+                    "role": "primer" if is_primer else ("waiter" if prime_gate is not None else "ungated"),
+                    "prime_key": prefix_prime_key(prompt),
+                    "prompt_len": len(prompt),
+                }) + "\n")
+        except Exception:
+            pass
     if prime_gate is not None and not is_primer:
         wait_s = env_float("CLAUDE_CODEX_GATEWAY_PRIME_WAIT_SECONDS", default=20.0)
         opened = prime_gate.wait(timeout=wait_s)
