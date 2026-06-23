@@ -14,24 +14,24 @@ def expect(cond, msg):
         raise SystemExit(f"FAIL: {msg}")
 
 
-def test_directive_names_concrete_caps():
+def test_directive_is_lean_without_hard_cap():
     os.environ.pop("CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD", None)
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_MAX_FILE_READS", None)
     d = gw.context_budget_directive()
-    # The guard must give the lane a concrete read budget and tell it to summarize
-    # rather than dump whole files — that is what stops the 833-read / 532K-token blowup.
+    # The guard must steer the lane to work targeted (grep/glob, no whole-dir dumps)
+    # WITHOUT a hard file cap that would kill a task genuinely needing many files.
     expect("file" in d.lower(), "directive mentions files")
-    expect(any(c.isdigit() for c in d), "directive states a concrete number")
-    expect("summar" in d.lower() or "tóm" in d.lower(), "directive tells the lane to summarize, not dump")
+    expect("grep" in d.lower() or "glob" in d.lower() or "targeted" in d.lower(),
+           "directive steers toward targeted search, not whole-dir reads")
 
 
-def test_max_file_reads_env_appears_in_directive():
-    os.environ["CLAUDE_CODEX_GATEWAY_MAX_FILE_READS"] = "40"
-    try:
-        d = gw.context_budget_directive()
-        expect("40" in d, "configured read cap (40) is surfaced in the directive")
-    finally:
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MAX_FILE_READS", None)
+def test_directive_tells_lane_to_flag_oversized_work():
+    # The key behaviour replacing the hard cap: an oversized lane must FLAG that the
+    # task should be split, not silently cram everything into one lane.
+    d = gw.context_budget_directive()
+    expect("split" in d.lower() or "smaller lanes" in d.lower() or "too large" in d.lower(),
+           "directive tells an oversized lane to flag for decomposition")
+    expect("ONE lane" in d or "one lane" in d.lower(),
+           "directive references doing the work in a single lane vs splitting")
 
 
 def test_disabled_returns_empty():
@@ -58,14 +58,22 @@ def test_guard_present_in_assembled_prompt_for_tool_lane():
     msgs = [{"role": "user", "content": "Read the whole repo and report."}]
     tools = [{"name": "read_file", "input_schema": {"type": "object"}}]
     out = gw.openai_messages_to_prompt(msgs, tools)
-    expect("file" in out.lower() and any(c.isdigit() for c in out),
+    expect("WORK LEAN" in out or "work lean" in out.lower(),
            "assembled tool-lane prompt carries the context-budget guard")
 
 
+def test_no_guard_for_toolless_lane():
+    # A lane with no tools cannot read files, so it should NOT carry the guard.
+    msgs = [{"role": "user", "content": "Summarize this text."}]
+    out = gw.openai_messages_to_prompt(msgs, None)
+    expect("WORK LEAN" not in out, "tool-less lane gets no read guard")
+
+
 if __name__ == "__main__":
-    test_directive_names_concrete_caps()
-    test_max_file_reads_env_appears_in_directive()
+    test_directive_is_lean_without_hard_cap()
+    test_directive_tells_lane_to_flag_oversized_work()
     test_disabled_returns_empty()
     test_guard_is_prefix_stable()
     test_guard_present_in_assembled_prompt_for_tool_lane()
+    test_no_guard_for_toolless_lane()
     print("PASS: context budget guard")

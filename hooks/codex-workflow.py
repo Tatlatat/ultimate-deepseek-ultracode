@@ -43,6 +43,17 @@ PREFIX_GUIDE_TEXT = (
     "   shared file/source text, BYTE-IDENTICAL across lanes, (c) THEN the one\n"
     "   short lane-specific line (the dimension / finding / angle) LAST. The big\n"
     "   shared block must come before anything that differs between lanes.\n"
+    "6. DECOMPOSE FINELY — the cost/speed/quality lever that dwarfs the rest. Each\n"
+    "   agent() lane is DeepSeek-flash and CANNOT spawn its own sub-lanes, so a big\n"
+    "   vague lane crams everything into one context (measured failure: one lane\n"
+    "   read 833 files -> 532K tokens -> 75% cache, 18 min). One lane = one file /\n"
+    "   one function / one module / one focused question — something done by reading\n"
+    "   a HANDFUL of files, not a directory. If a lane's prompt would make it read\n"
+    "   10+ files, that is 10+ lanes via parallel(). A workflow with only 2-5 lanes\n"
+    "   is almost always under-decomposed: find the big lanes and split them. This\n"
+    "   machine runs ~14 lanes at once — use them. More small lanes beats fewer big\n"
+    "   lanes on cost AND speed AND quality. Then ONE synthesize lane merges the\n"
+    "   short per-lane summaries.\n"
     "This is advisory — correctness first; apply where it doesn't distort the work."
 )
 

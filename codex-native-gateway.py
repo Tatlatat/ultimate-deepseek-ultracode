@@ -738,29 +738,31 @@ def mapreduce_directive() -> str:
 
 
 def context_budget_directive() -> str:
-    """A lane-invariant guard that caps how much a worker lane pulls into its own
-    context. Measured root cause of the 75-80% cache + slow lanes: a single lane
-    read 833 files / ran 659 commands, ballooning its prompt to 532K tokens — every
-    fresh file is uncached content, so cache craters and flash slows to a crawl.
-    This directive tells the lane to work within a read budget and SUMMARIZE as it
-    goes instead of dumping whole files, which is exactly the sub-agent
-    context-isolation pattern, applied in-prompt. Byte-identical across lanes so it
-    sits at the FRONT without breaking the shared prefix. Off via
-    CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD=0."""
+    """A lane-invariant guard that keeps a worker lane LEAN without a hard read cap.
+    Root cause of the 75-80% cache + slow lanes (measured): a lane read 833 files /
+    ran 659 commands, ballooning its prompt to 532K tokens — every fresh file is
+    uncached content, so cache craters and flash slows. A HARD cap is wrong: a lane
+    that genuinely needs 50 files would be killed, and flash (acp, no subagentRunner)
+    cannot self-split an oversized task. So this guard does NOT cap — it tells the
+    lane to work in a targeted way AND to FLAG when the task is too big to do well in
+    one lane, so the work surfaces for decomposition instead of being silently
+    crammed. The real fix for oversized work is finer decomposition at the controller
+    (see system-prompt-reasonix.md). Byte-identical across lanes (prefix-stable).
+    Off via CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD=0."""
     if os.getenv("CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD", "1").lower() not in {"1", "true", "yes", "on"}:
         return ""
-    max_reads = env_int("CLAUDE_CODEX_GATEWAY_MAX_FILE_READS", default=30)
     return (
-        "CONTEXT BUDGET (work lean — this directly controls cost and speed):\n"
-        f"- Read at most ~{max_reads} files. If the task needs more, read the most "
-        "relevant ones first, SUMMARIZE what you found in your own words, and STOP "
-        "reading — do not dump whole files into your working context.\n"
-        "- Prefer targeted search (grep/glob for the exact symbol) over reading "
-        "entire files or whole directories.\n"
-        "- Never re-read a file you already read. Keep a running summary, not raw "
-        "file contents.\n"
-        "- When you have enough to answer, answer. Breadth without a budget wastes "
-        "tokens and time and produces worse results.\n"
+        "WORK LEAN (this directly controls cost and speed — but never skip work the "
+        "task actually requires):\n"
+        "- Use targeted search (grep/glob for the exact symbol) before reading whole "
+        "files or whole directories. Read what the task needs — no more, no less.\n"
+        "- Keep a running summary in your own words; do not re-read files you already "
+        "read or hold raw file dumps you no longer need.\n"
+        "- If this task is genuinely too large to do well in ONE lane (it would need "
+        "to read very many files or explore broadly), say so explicitly in your "
+        "answer and describe how it should be split into smaller lanes — do NOT try "
+        "to cram all of it into this single lane. Right-sized lanes are faster, "
+        "cheaper, and more accurate.\n"
     )
 
 

@@ -34,14 +34,35 @@ When a task is in the "always delegate" list, do NOT start writing the code
 yourself — dispatch a Reasonix lane. Default is delegate; self-doing is the
 exception, reserved for the "Claude keeps these" list.
 
-## How to split work for Reasonix lanes
-- Reasonix lanes are strongest on **atomic, well-scoped** tasks: one function,
-  one class, one module, one focused question. Decompose a large task into MANY
-  small lanes rather than one big lane.
-- Agent COUNT is **unlimited** — if the work benefits from 1000 lanes, spawn
-  1000. Fan-out is the source of power; savings come from cheap-per-agent.
-- Each lane is hard-capped at $0.05; v4-flash + cache is very cheap, so fan out
-  widely without worrying about per-lane cost.
+## How to split work for Reasonix lanes — DECOMPOSE FINELY (this is the #1 lever)
+A Reasonix lane is DeepSeek-flash. It is fast and accurate on a SMALL, SHARP task
+and slow + bloated + inaccurate on a BIG, VAGUE one. A flash lane in acp mode
+CANNOT spawn its own sub-lanes — so if YOU hand it a big task, it crams everything
+into one lane (measured failure: one lane read 833 files / ran 659 commands →
+532K-token context → 75% cache, 18 min, worse output). The fix is entirely in how
+YOU split the work BEFORE dispatching.
+
+**The granularity rule: one lane = one file, one function, one module, or one
+focused question — something a lane can finish by reading a HANDFUL of files, not
+a directory.** If a lane's prompt would make it read 10+ files, that is 10+ lanes.
+
+- ❌ WRONG (one big lane): `agent("Read the whole control_plane: workflow.py,
+  runner.py, models.py, ports.py, store.py, safety/, publish/, monetize/ — explain
+  everything")`. One flash lane, 15+ files, bloated, slow.
+- ✅ RIGHT (fan out): `parallel([ "explain workflow.py", "explain runner.py + the
+  DailyChannelWorkflow", "map the safety/ FSM", "map publish/ adapters",
+  "map monetize/ ROI" ].map(t => agent(t)))` — 5+ small lanes, each reads 1-3
+  files, all run concurrently, each caches well. Then ONE synthesize lane merges
+  their short summaries (the Synthesize phase — see map-reduce policy above).
+
+- **Use the concurrency you have.** This machine runs up to ~14 lanes at once. A
+  workflow with only 2-5 lanes is almost always under-decomposed — look for the
+  big lanes and split them until each is atomic. More small lanes beats fewer big
+  lanes on cost, speed, AND quality.
+- Agent COUNT is **unlimited** and each lane is hard-capped at $0.05; v4-flash +
+  cache is very cheap, so fan out widely without worrying about per-lane cost.
+- If a lane comes back saying the task was too big / it had to read very many
+  files, that is a signal to split that lane further on the next pass.
 - **web search is available inside a lane** as a built-in tool — a Reasonix lane
   can research the web on its own; no special flag needed.
 - Reasonix lanes write real files in the workspace (yolo mode).
