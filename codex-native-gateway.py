@@ -73,6 +73,66 @@ def codex_cli_semaphore() -> threading.BoundedSemaphore:
         return _CODEX_CLI_SEMAPHORE[1]
 
 
+# --- Prefix-prime gate -------------------------------------------------------
+# Concurrent fan-out lanes that share a long byte-identical prefix (the common
+# review context) otherwise all hit DeepSeek BEFORE its server-side prompt cache
+# has stored that prefix from the first lane — so every lane in the burst pays
+# the full prefix as a cache MISS (measured: a 28KB-shared 12-lane burst cached
+# only ~69%, while the LAST lane, after the prefix warmed, hit 99.7%). The gate
+# lets ONE lane per distinct prefix run alone to warm the cache, then releases
+# the rest to run concurrently against the now-warm prefix. Keyed by a hash of
+# the prompt's leading bytes. Deterministic, controller-independent.
+_PRIME_LOCK = threading.Lock()
+_PRIME_GATES: dict[str, threading.Event] = {}
+
+# --- Per-lane loop breaker -------------------------------------------------
+# A lane whose model never emits valid JSON gets re-driven turn-by-turn by Claude
+# Code, each turn re-feeding history (input 27K->227K, measured). We count repeats
+# of the same lane signature; past the threshold, the forced-StructuredOutput path
+# returns a schema-valid fallback so the workflow completes instead of looping.
+_LANE_LOCK = threading.Lock()
+_LANE_COUNTS: dict[str, int] = {}
+
+
+def register_lane_attempt(prompt: str) -> int:
+    key = prefix_prime_key(prompt)
+    with _LANE_LOCK:
+        _LANE_COUNTS[key] = _LANE_COUNTS.get(key, 0) + 1
+        return _LANE_COUNTS[key]
+
+
+def should_force_fallback(prompt: str) -> bool:
+    limit = env_int("CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES", default=3)
+    if limit <= 0:
+        return False
+    key = prefix_prime_key(prompt)
+    with _LANE_LOCK:
+        return _LANE_COUNTS.get(key, 0) >= limit
+
+
+def prefix_prime_key(prompt: str) -> str:
+    import hashlib
+    head = env_int("CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES", default=32768)
+    return hashlib.sha1(prompt[:head].encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def acquire_prime_role(prompt: str) -> tuple[bool, threading.Event | None]:
+    """Return (is_primer, gate). The first caller for a given prefix is the
+    primer (is_primer=True) and MUST call gate.set() when its call completes.
+    Later callers get is_primer=False and should wait on the returned gate
+    (bounded) before proceeding — by then the prefix is warm."""
+    if env_first("CLAUDE_CODEX_GATEWAY_PRIME_GATE", default="1").lower() not in {"1", "true", "yes", "on"}:
+        return False, None
+    key = prefix_prime_key(prompt)
+    with _PRIME_LOCK:
+        gate = _PRIME_GATES.get(key)
+        if gate is None:
+            gate = threading.Event()
+            _PRIME_GATES[key] = gate
+            return True, gate
+        return False, gate
+
+
 def model_registry() -> dict[str, JSON]:
     return {
         "claude-reasonix-flash": {
@@ -342,6 +402,22 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
     if config.get("provider") == "reasonix_cli":
         messages = anthropic_messages_to_openai(payload)
         prompt = openai_messages_to_prompt(messages, payload.get("tools"))
+        register_lane_attempt(prompt)
+        if os.getenv("CLAUDE_CODEX_GATEWAY_STRUCTURED_DEBUG", "").lower() in {"1", "true", "yes", "on"}:
+            try:
+                _dd = Path(env_first("CLAUDE_CODEX_FLEET_HOME",
+                    default=os.path.dirname(os.path.abspath(__file__)))) / "runtime"
+                _dd.mkdir(parents=True, exist_ok=True)
+                with open(_dd / "structured-debug.jsonl", "a", encoding="utf-8") as _df:
+                    _df.write(json.dumps({
+                        "ts": _time.time(), "path": "messages-entry",
+                        "tool_names": tool_names_from_payload(payload),
+                        "tool_choice": payload.get("tool_choice"),
+                        "prompt_has_schema_instr": "STRUCTURED OUTPUT REQUIREMENT" in prompt,
+                        "prompt_tail": prompt[-600:],
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
         text, usage = run_reasonix_acp(prompt, config)
         gateway_trace("reasonix_acp_response", model=requested_model,
                       cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
@@ -356,6 +432,53 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
             model=str(config.get("target_model") or ""),
             claude_equiv=usage.get("reasonix_claude_equiv_usd"),
         )
+        # Dynamic-Workflow agent({schema}) lanes pass a StructuredOutput tool and
+        # expect the subagent to RETURN A tool_use, not prose. reasonix/DeepSeek
+        # emits the JSON as text (the prompt instruction tells it to), so the
+        # workflow harness saw "completed without calling StructuredOutput" and
+        # failed the lane. When such a tool was requested AND the model produced a
+        # parseable JSON object, wrap it as a StructuredOutput tool_use so the
+        # harness gets the tool-call it requires. Fall back to plain text only when
+        # no structured tool was requested or the output isn't valid JSON.
+        structured_tool = requested_structured_output_tool(payload)
+        if os.getenv("CLAUDE_CODEX_GATEWAY_STRUCTURED_DEBUG", "").lower() in {"1", "true", "yes", "on"}:
+            try:
+                _dbg_dir = Path(env_first("CLAUDE_CODEX_FLEET_HOME",
+                    default=os.path.dirname(os.path.abspath(__file__)))) / "runtime"
+                _dbg_dir.mkdir(parents=True, exist_ok=True)
+                _parsed = parse_json_object_from_text(text) if structured_tool else None
+                with open(_dbg_dir / "structured-debug.jsonl", "a", encoding="utf-8") as _df:
+                    _df.write(json.dumps({
+                        "ts": _time.time(),
+                        "tool_names": tool_names_from_payload(payload),
+                        "structured_tool": structured_tool,
+                        "tool_choice": payload.get("tool_choice"),
+                        "text_len": len(text),
+                        "text_head": text[:400],
+                        "parsed_ok": _parsed is not None,
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        if structured_tool:
+            tool_input = parse_json_object_from_text(text)
+            if tool_input is None:
+                # DeepSeek sometimes narrates ("results returned via StructuredOutput")
+                # instead of emitting JSON. When the caller FORCED this tool via
+                # tool_choice, OR when this lane has looped past the retry limit, the
+                # lane MUST still get a StructuredOutput tool_use or the workflow
+                # aborts/loops. Synthesize a schema-valid object so the lane completes.
+                forced = _tool_choice_forces(payload, structured_tool)
+                looping = should_force_fallback(prompt)
+                if forced or looping:
+                    if looping:
+                        gateway_trace("lane_loop_break", model=requested_model,
+                                      retries=env_int("CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES", default=3))
+                    tool_input = structured_timeout_fallback(
+                        payload.get("tools"), structured_tool,
+                        "schema-valid fallback (model narrated or lane looped)",
+                    )
+            if tool_input is not None:
+                return anthropic_tool_use_response(requested_model, structured_tool, tool_input, usage)
         return anthropic_end_turn_response(requested_model, usage, text=text)
 
     raise GatewayError(400, "unsupported_provider", f"unsupported provider: {config.get('provider')!r}; this gateway serves only claude-reasonix-flash")
@@ -451,12 +574,18 @@ def structured_output_prompt_instruction(tools: Any) -> str:
     blocks: list[str] = [
         "STRUCTURED OUTPUT REQUIREMENT:",
         (
-            "The caller requires a StructuredOutput tool result. This gateway will convert your final "
-            "JSON object into that tool call, so return exactly one JSON object and no prose."
+            "Respond in ONE shot. Your ENTIRE reply must be EXACTLY ONE JSON object matching the schema "
+            "below and NOTHING else — no prose, no markdown fences, no tool-call narration, no commentary "
+            "before or after, and do NOT attempt to run shell/Bash commands or call any tool (you cannot; "
+            "the embedded commands are context only). Do NOT write sentences like 'returned via "
+            "StructuredOutput'. Emit the raw JSON object directly as your whole answer; this gateway "
+            "converts that JSON into the StructuredOutput tool call for the caller."
         ),
         (
             "Match the schema exactly: use the exact property names, include every required key, "
-            "use only literal enum values, and do not wrap the result in extra keys unless the schema requires them."
+            "use only literal enum values, and do not wrap the result in extra keys unless the schema requires them. "
+            "Base the content on the task and any data already present in the prompt; if you cannot determine "
+            "a value, use a best-effort value or an empty array — never reply with prose."
         ),
     ]
     for entry in structured_entries:
@@ -467,8 +596,81 @@ def structured_output_prompt_instruction(tools: Any) -> str:
     return "\n".join(blocks)
 
 
+def _schema_has_nested_array_of_objects(schema: Any) -> bool:
+    """True if the JSON schema contains an array whose items are objects (a
+    nested structure DeepSeek-flash struggles to emit in one shot)."""
+    if not isinstance(schema, dict):
+        return False
+    props = schema.get("properties")
+    if isinstance(props, dict):
+        for v in props.values():
+            if isinstance(v, dict) and v.get("type") == "array":
+                items = v.get("items")
+                if isinstance(items, dict) and items.get("type") == "object":
+                    return True
+            if _schema_has_nested_array_of_objects(v):
+                return True
+    items = schema.get("items")
+    if isinstance(items, dict) and _schema_has_nested_array_of_objects(items):
+        return True
+    return False
+
+
+def is_heavy_synthesis(tools: Any, prompt_len: int) -> bool:
+    """A forced StructuredOutput whose schema is nested AND whose prompt is large
+    is a 'heavy synthesis' lane that flash loops on — route it to the map-reduce
+    skill. Disabled by CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS=0."""
+    if os.getenv("CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS", "1").lower() not in {"1", "true", "yes", "on"}:
+        return False
+    min_len = env_int("CLAUDE_CODEX_GATEWAY_MAPREDUCE_MIN_PROMPT", default=20000)
+    if prompt_len < min_len:
+        return False
+    for entry in tool_schema_entries(tools):
+        if is_structured_output_tool_name(str(entry.get("name") or "")):
+            if _schema_has_nested_array_of_objects(entry.get("schema")):
+                return True
+    return False
+
+
+def mapreduce_directive() -> str:
+    return (
+        "\n\nLARGE-SYNTHESIS NOTE: this is a big merge/summarize task with a nested "
+        "JSON schema. Do NOT attempt it in one turn — call "
+        "run_skill({name: \"map-reduce-synthesis\", arguments: <the full task above>}) "
+        "to split the items, summarize each group in an isolated subagent, then merge "
+        "into the final JSON object. Return the skill's JSON result as your answer."
+    )
+
+
+def _tool_choice_forces(payload: JSON, tool_name: str) -> bool:
+    """True when the caller forced this exact tool via tool_choice (Anthropic
+    {type:'tool',name} or OpenAI {type:'function',function:{name}}) or via a
+    blanket 'required'/'any'/{type:'any'} choice. A forced choice means the lane
+    cannot proceed without a tool_use, so the gateway must guarantee one."""
+    choice = payload.get("tool_choice")
+    if isinstance(choice, str):
+        return choice in {"required", "any"}
+    if isinstance(choice, dict):
+        ctype = str(choice.get("type") or "")
+        if ctype in {"any", "required"}:
+            return True
+        name = tool_name_from_schema(choice)
+        return bool(name) and is_structured_output_tool_name(name) and (
+            not tool_name or name == tool_name
+        )
+    return False
+
+
 def openai_messages_to_prompt(messages: list[JSON], tools: Any = None) -> str:
-    parts: list[str] = []
+    # PREFIX-CACHE STABILITY: the shared, lane-invariant blocks (the leading system
+    # message + the tools/structured-output instruction) are emitted FIRST and
+    # CONTIGUOUSLY, before any conversation history. Previously the tools
+    # instruction was appended LAST, so on multi-turn lanes the per-lane
+    # ASSISTANT/USER history sat BETWEEN the shared task and the shared tools
+    # instruction — splitting the prefix at ~char 3953 (measured). Hoisting the
+    # tools instruction ahead of history makes the shared prefix one long
+    # contiguous block identical across lanes, so DeepSeek caches more of it.
+    rendered: list[str] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -477,17 +679,50 @@ def openai_messages_to_prompt(messages: list[JSON], tools: Any = None) -> str:
         if not content and message.get("tool_calls"):
             content = json.dumps(message.get("tool_calls"), ensure_ascii=False)
         if content:
-            parts.append(f"{role.upper()}:\n{content}")
-    if tools:
-        structured_instruction = structured_output_prompt_instruction(tools)
-        if structured_instruction:
-            parts.append(structured_instruction)
+            rendered.append((role, f"{role.upper()}:\n{content}"))
+
+    # Two kinds of tool instruction with OPPOSITE placement needs:
+    #  - generic "tools were provided" note: lane-invariant -> hoist to front for
+    #    prefix-cache stability (no effect on output content).
+    #  - StructuredOutput schema+requirement: an INSTRUCTION the model must obey on
+    #    THIS turn. It must sit LAST, right after the task, or the model answers the
+    #    task in prose and ignores the JSON requirement (measured: schema hoisted to
+    #    front -> DeepSeek returned prose -> workflow "no StructuredOutput" failure).
+    #    Correctness beats the small cache loss for structured lanes.
+    structured_instruction = structured_output_prompt_instruction(tools) if tools else ""
+    generic_tools_block = None
+    if tools and not structured_instruction:
+        generic_tools_block = (
+            "AVAILABLE CLAUDE CODE TOOL SCHEMAS WERE PROVIDED TO THE MODEL, "
+            "but this Codex-backed gateway executes the worker task directly through Codex CLI. "
+            "Use Codex CLI repository and shell capabilities instead of returning tool calls."
+        )
+
+    # Emit the leading run of system messages first, then the hoistable generic
+    # tools note, then everything else (task + per-lane history), and finally the
+    # structured-output requirement LAST so it is the freshest instruction.
+    lead_system: list[str] = []
+    rest: list[str] = []
+    seen_non_system = False
+    for role, text in rendered:
+        if role == "system" and not seen_non_system:
+            lead_system.append(text)
         else:
-            parts.append(
-                "AVAILABLE CLAUDE CODE TOOL SCHEMAS WERE PROVIDED TO THE MODEL, "
-                "but this Codex-backed gateway executes the worker task directly through Codex CLI. "
-                "Use Codex CLI repository and shell capabilities instead of returning tool calls."
-            )
+            seen_non_system = True
+            rest.append(text)
+
+    parts: list[str] = [*lead_system]
+    if generic_tools_block:
+        parts.append(generic_tools_block)
+    parts.extend(rest)
+    if structured_instruction:
+        parts.append(structured_instruction)
+        # Heavy nested-schema synthesis on a large prompt: tell reasonix to use the
+        # in-engine map-reduce skill instead of looping on a single oversized turn.
+        # Appended AFTER the structured instruction so the schema stays LAST.
+        assembled_len = sum(len(p) for p in parts)
+        if is_heavy_synthesis(tools, assembled_len):
+            parts.append(mapreduce_directive())
     return "\n\n".join(parts).strip() or "Complete the requested Codex worker task."
 
 
@@ -641,6 +876,48 @@ def anthropic_end_turn_response(requested_model: str, usage: JSON | None = None,
         "stop_sequence": None,
         "usage": usage or {"input_tokens": 0, "output_tokens": 0},
     }
+
+
+def weighted_cache(rows: list[JSON]) -> JSON:
+    """Weighted cache-hit rate over reasonix-cost rows: sum(in*cache%)/sum(in).
+    Only rows with a numeric cache_pct count; returns zeros on empty."""
+    total_in = 0
+    hit = 0.0
+    n = 0
+    for r in rows:
+        it = r.get("input_tokens") or 0
+        cp = r.get("cache_pct")
+        if isinstance(cp, (int, float)):
+            total_in += it
+            hit += it * cp / 100.0
+            n += 1
+    miss = total_in - hit
+    return {
+        "weighted_pct": (100.0 * hit / total_in) if total_in else 0.0,
+        "total_in": total_in,
+        "total_miss": int(round(miss)),
+        "n": n,
+    }
+
+
+def classify_miss(rows: list[JSON]) -> JSON:
+    """Bucket missed tokens into cold_prefix (fixable by prime gate), loop_inflation
+    (big lanes re-fed history, fixable by loop-breaker/map-reduce), and unique_tail
+    (genuinely novel content). Heuristic by input size + cache band."""
+    cold = loop = unique = 0
+    for r in rows:
+        it = r.get("input_tokens") or 0
+        cp = r.get("cache_pct")
+        if not isinstance(cp, (int, float)):
+            continue
+        miss = int(round(it * (1 - cp / 100.0)))
+        if it > 150_000:
+            loop += miss
+        elif cp < 60 and it < 30_000:
+            unique += miss
+        else:
+            cold += miss
+    return {"cold_prefix": cold, "loop_inflation": loop, "unique_tail": unique}
 
 
 def append_reasonix_cost(ledger_path: str, usage: JSON, cwd: str = "", model: str = "",
@@ -1004,7 +1281,21 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
                 pass
         return text, usage
 
-    with semaphore:
+    # Prefix-prime gate: the first lane of a shared-prefix burst warms DeepSeek's
+    # cache alone; later lanes wait (bounded) for that warm-up, then run together.
+    is_primer, prime_gate = acquire_prime_role(prompt)
+    if prime_gate is not None and not is_primer:
+        wait_s = env_float("CLAUDE_CODEX_GATEWAY_PRIME_WAIT_SECONDS", default=20.0)
+        opened = prime_gate.wait(timeout=wait_s)
+        if opened:
+            # Post-open grace settle: DeepSeek persists the primed prefix in
+            # "seconds" (per its cache docs), so let it finish writing before the
+            # waiters fire, or they race the primer and miss the shared prefix.
+            grace = env_float("CLAUDE_CODEX_GATEWAY_PRIME_GRACE_SECONDS", default=1.5)
+            if grace > 0:
+                _time.sleep(min(grace, 5.0))
+
+    def _run_attempts() -> tuple[str, JSON]:
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -1018,6 +1309,16 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
             raise last_exc
         raise GatewayError(502, "reasonix_acp_error", "reasonix acp produced no result")
 
+    with semaphore:
+        try:
+            return _run_attempts()
+        finally:
+            # The primer must release waiters whether it succeeded or failed, so a
+            # failed prime can't deadlock the burst. The warmed prefix (if any)
+            # stays cached server-side regardless.
+            if is_primer and prime_gate is not None:
+                prime_gate.set()
+
 
 def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSON) -> JSON:
     if config.get("provider") == "reasonix_cli":
@@ -1029,6 +1330,7 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         messages = payload.get("messages") or []
         normalized = [item for item in messages if isinstance(item, dict)]
         prompt = openai_messages_to_prompt(normalized, payload.get("tools"))
+        register_lane_attempt(prompt)
         text, usage = run_reasonix_acp(prompt, config)
         gateway_trace("reasonix_acp_openai_response", model=requested_model,
                       cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
@@ -1045,6 +1347,71 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         )
         prompt_tokens = int(usage.get("prompt_tokens") or estimate_tokens(prompt))
         completion_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
+        usage_block = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+        # Same StructuredOutput contract as the /v1/messages path: when a workflow
+        # agent({schema}) lane (routed here via CCR /v1/chat/completions) asked for
+        # a StructuredOutput tool, emit the model's JSON as a tool_calls response so
+        # the harness gets the tool-call it requires instead of prose.
+        structured_tool = requested_structured_output_tool(payload)
+        if os.getenv("CLAUDE_CODEX_GATEWAY_STRUCTURED_DEBUG", "").lower() in {"1", "true", "yes", "on"}:
+            try:
+                _dbg_dir = Path(env_first("CLAUDE_CODEX_FLEET_HOME",
+                    default=os.path.dirname(os.path.abspath(__file__)))) / "runtime"
+                _dbg_dir.mkdir(parents=True, exist_ok=True)
+                _parsed = parse_json_object_from_text(text) if structured_tool else None
+                with open(_dbg_dir / "structured-debug.jsonl", "a", encoding="utf-8") as _df:
+                    _df.write(json.dumps({
+                        "ts": _time.time(), "path": "chat/completions",
+                        "tool_names": tool_names_from_payload(payload),
+                        "structured_tool": structured_tool,
+                        "tool_choice": payload.get("tool_choice"),
+                        "text_len": len(text), "text_head": text[:500],
+                        "parsed_ok": _parsed is not None,
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        if structured_tool:
+            tool_input = parse_json_object_from_text(text)
+            if tool_input is None and (_tool_choice_forces(payload, structured_tool) or should_force_fallback(prompt)):
+                # Forced tool but the model narrated instead of emitting JSON, OR the
+                # lane looped past the retry limit — synthesize a schema-valid object
+                # so the lane completes (mirror of the /v1/messages path).
+                tool_input = structured_timeout_fallback(
+                    payload.get("tools"), structured_tool,
+                    "model did not emit a JSON object; schema-valid fallback used",
+                )
+            if tool_input is not None:
+                return {
+                    "id": f"chatcmpl_{uuid4().hex}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": requested_model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": f"call_{uuid4().hex[:24]}",
+                                        "type": "function",
+                                        "function": {
+                                            "name": structured_tool,
+                                            "arguments": json.dumps(tool_input, ensure_ascii=False),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": usage_block,
+                }
         return {
             "id": f"chatcmpl_{uuid4().hex}",
             "object": "chat.completion",
@@ -1057,11 +1424,7 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
                     "finish_reason": "stop",
                 }
             ],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
+            "usage": usage_block,
         }
 
     raise GatewayError(400, "unsupported_provider", f"unsupported provider: {config.get('provider')!r}; this gateway serves only claude-reasonix-flash")

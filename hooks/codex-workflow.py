@@ -24,6 +24,17 @@ PREFIX_GUIDE_TEXT = (
     "   the lane prompt; put the lane-specific task/data LAST.\n"
     "3. Batch by shared data: when several lanes consume the same data set, give\n"
     "   them the same set in the same order so they share a cached prefix.\n"
+    "4. DURABLE shared block — the #1 cache lever, measured: build ONE fixed\n"
+    "   shared-context string ONCE (the full text of every file under review +\n"
+    "   the common instructions), and pass that SAME string, byte-identical and\n"
+    "   FIRST, into every lane's prompt — review lanes AND verify/skeptic lanes.\n"
+    "   A verify lane's prompt must be: [identical shared block] + [the one short\n"
+    "   finding to refute]. Do NOT let a lane re-read or re-quote a file into the\n"
+    "   middle of its prompt — that injects a unique mid-prompt block that misses\n"
+    "   the cache. Pass files through the shared block, never per-lane. In a real\n"
+    "   run, the verify lanes that re-read files carried ~92% of all missed\n"
+    "   tokens; routing those reads through one shared block lifts weighted cache\n"
+    "   from ~94% to ~99%.\n"
     "This is advisory — correctness first; apply where it doesn't distort the work."
 )
 
@@ -340,11 +351,28 @@ def main() -> int:
     updated = dict(tool_input)
     script = updated.get("script")
     if not isinstance(script, str):
-        script = resolve_named_workflow(updated, payload.get("cwd"))
-        if script is None:
-            return 0
-        updated.pop("name", None)
-        updated["script"] = script
+        # A workflow can be passed three ways: inline `script`, a saved `name`, or
+        # a `scriptPath` file. Without handling scriptPath, a skill-provided script
+        # file (e.g. qwen-workflow-research's qwen-research.js) is NOT rewritten, so
+        # its bare agent() lanes default to the MAIN model (Opus) instead of the
+        # reasonix subagent — they then fail/throttle. Read the file and inline it
+        # so the same rewrite applies; drop scriptPath so the runtime uses our script.
+        script_path = updated.get("scriptPath")
+        if isinstance(script_path, str) and script_path:
+            try:
+                with open(os.path.expanduser(script_path), "r", encoding="utf-8") as _sf:
+                    script = _sf.read()
+            except Exception as exc:  # noqa: BLE001
+                print(f"Codex Workflow hook could not read scriptPath {script_path}: {exc}", file=sys.stderr)
+                return 0
+            updated.pop("scriptPath", None)
+            updated["script"] = script
+        else:
+            script = resolve_named_workflow(updated, payload.get("cwd"))
+            if script is None:
+                return 0
+            updated.pop("name", None)
+            updated["script"] = script
 
     mode = workflow_mode()
     rewritten, count = rewrite_script(script, mode)
