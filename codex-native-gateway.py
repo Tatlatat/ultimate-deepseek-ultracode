@@ -1895,9 +1895,14 @@ class Handler(BaseHTTPRequestHandler):
             start_message = dict(message)
             start_message["content"] = []
             self.send_sse_event("message_start", {"type": "message_start", "message": start_message})
+        next_index = start_index
+        emitted_real = 0
         for index, block in enumerate(message.get("content") or [], start=start_index):
+            next_index = index + 1
             block_type = block.get("type")
             if block_type == "text":
+                if block.get("text", "").strip():
+                    emitted_real += 1
                 self.send_sse_event(
                     "content_block_start",
                     {"type": "content_block_start", "index": index, "content_block": {"type": "text", "text": ""}},
@@ -1908,6 +1913,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self.send_sse_event("content_block_stop", {"type": "content_block_stop", "index": index})
             elif block_type == "tool_use":
+                emitted_real += 1
                 self.send_sse_event(
                     "content_block_start",
                     {
@@ -1925,6 +1931,25 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
                 self.send_sse_event("content_block_stop", {"type": "content_block_stop", "index": index})
+
+        # HOLLOW-LANE GUARD (found by the multi-agent audit): if the producer returned
+        # no real content (empty/whitespace-only reasonix reply), the stream so far
+        # carries zero answer and no error — the workflow lane comes back silently
+        # empty. Emit an explicit text block so the lane surfaces the problem instead
+        # of looking like a clean empty success. Off via
+        # CLAUDE_CODEX_GATEWAY_HOLLOW_GUARD=0.
+        if emitted_real == 0 and os.getenv("CLAUDE_CODEX_GATEWAY_HOLLOW_GUARD", "1").lower() in {"1", "true", "yes", "on"}:
+            self.send_sse_event(
+                "content_block_start",
+                {"type": "content_block_start", "index": next_index, "content_block": {"type": "text", "text": ""}},
+            )
+            self.send_sse_event(
+                "content_block_delta",
+                {"type": "content_block_delta", "index": next_index, "delta": {"type": "text_delta",
+                 "text": "[reasonix lane returned no content — the task may be too large for one "
+                         "lane or the model produced nothing. Split this into smaller lanes and retry.]"}},
+            )
+            self.send_sse_event("content_block_stop", {"type": "content_block_stop", "index": next_index})
 
         self.send_sse_event(
             "message_delta",
