@@ -1132,6 +1132,19 @@ def summarize_reasonix_cost(ledger_path: str) -> JSON:
 
 
 def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
+    # TEST HOOK: simulate reasonix's reply WITHOUT spawning the CLI / hitting
+    # DeepSeek, so an e2e test can drive the FULL real path — including the
+    # parse-text->StructuredOutput-tool_use and forced-fallback logic in
+    # call_openai_compatible, which is exactly where workflow lanes live or die and
+    # which the old text-only MOCK mode skipped entirely. Set
+    # CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT to the text reasonix should "return"
+    # (e.g. a JSON object, or prose to test the narrate->fallback path).
+    _mock_text = os.getenv("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT")
+    if _mock_text is not None:
+        return _mock_text, {
+            "input_tokens": max(1, len(prompt) // 4), "output_tokens": max(1, len(_mock_text) // 4),
+            "cache_pct": 0.0, "reasonix_cost_usd": 0.0, "reasonix_cache_pct": 0.0,
+        }
     import queue as _queue
     reasonix_bin = str(config.get("reasonix_bin") or env_first("REASONIX_BIN", default="reasonix"))
     # reasonix is a Node CLI whose shebang is `env node`. If the gateway was
