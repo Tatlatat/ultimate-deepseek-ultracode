@@ -35,6 +35,14 @@ PREFIX_GUIDE_TEXT = (
     "   run, the verify lanes that re-read files carried ~92% of all missed\n"
     "   tokens; routing those reads through one shared block lifts weighted cache\n"
     "   from ~94% to ~99%.\n"
+    "5. STRICT ORDER inside each lane prompt — measured failure: a short per-lane\n"
+    "   instruction (e.g. 'DIMENSION: CORRECTNESS' or a role/angle line) placed\n"
+    "   BEFORE the big shared file content splits the prefix at ~5KB, so the whole\n"
+    "   file (the largest shared block) lands AFTER the divergence and misses on\n"
+    "   every lane. Order EXACTLY: (a) shared instruction template, (b) the full\n"
+    "   shared file/source text, BYTE-IDENTICAL across lanes, (c) THEN the one\n"
+    "   short lane-specific line (the dimension / finding / angle) LAST. The big\n"
+    "   shared block must come before anything that differs between lanes.\n"
     "This is advisory — correctness first; apply where it doesn't distort the work."
 )
 

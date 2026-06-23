@@ -112,8 +112,17 @@ def should_force_fallback(prompt: str) -> bool:
 
 
 def prefix_prime_key(prompt: str) -> str:
+    """Group lanes for the prime gate by hashing only the LEADING head of the
+    prompt (the part lanes actually share), NOT the whole prompt. Measured: real
+    fan-out lanes share ~5-8KB (system + shared intro/file head) then diverge into
+    per-lane data — hashing 32KB split every lane into its own key, so the gate
+    never grouped them. A short head (default 8KB) groups lanes that share that
+    leading block, so one primer warms it for the rest. Tunable via
+    CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD (falls back to the legacy
+    CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES if set)."""
     import hashlib
-    head = env_int("CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES", default=32768)
+    head = env_int("CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD",
+                   "CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES", default=4096)
     return hashlib.sha1(prompt[:head].encode("utf-8", "ignore")).hexdigest()[:16]
 
 

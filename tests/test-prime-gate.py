@@ -14,18 +14,22 @@ def expect(cond, msg):
         raise SystemExit(f"FAIL: {msg}")
 
 
-def test_key_uses_32kb_window():
-    # Prompts that share the first 8192 bytes but DIFFER between byte 8192 and 32768
-    # must get DIFFERENT keys — this only holds if the key window is 32KB, not 8KB.
-    base = "X" * 8192
-    a = base + "A" * 20000 + "tailA"
-    b = base + "B" * 20000 + "tailB"
-    expect(gw.prefix_prime_key(a) != gw.prefix_prime_key(b),
-           "differ within 8192..32768 -> different key (proves 32KB window, not 8KB)")
-    # Identical for the full 32KB head, differing only past 32768 -> SAME key.
-    head = "X" * 33000
-    expect(gw.prefix_prime_key(head + "AAAA") == gw.prefix_prime_key(head + "BBBB"),
-           "share full 32KB head -> same key")
+def test_key_groups_lanes_sharing_leading_head():
+    # The prime key hashes only the leading head (~4KB) so lanes that share that
+    # head but diverge later (the real fan-out shape) get the SAME key and the
+    # gate can prime once for all of them.
+    import os
+    os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD", None)
+    os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES", None)
+    head = "SHARED HEAD " * 500  # ~6KB common, beyond the 4KB key window
+    a = head + "DIMENSION A " + "tail A " * 3000
+    b = head + "DIMENSION B " + "tail B " * 3000
+    expect(gw.prefix_prime_key(a) == gw.prefix_prime_key(b),
+           "lanes sharing the leading head share a prime key")
+    # Lanes that differ WITHIN the leading head get different keys.
+    c = "DIFFERENT START " + head
+    expect(gw.prefix_prime_key(a) != gw.prefix_prime_key(c),
+           "differ inside the head -> different key")
 
 
 def test_grace_env_default():
@@ -52,7 +56,7 @@ def test_disabled_passthrough():
 
 
 if __name__ == "__main__":
-    test_key_uses_32kb_window()
+    test_key_groups_lanes_sharing_leading_head()
     test_grace_env_default()
     test_primer_then_waiter_roles()
     test_disabled_passthrough()
