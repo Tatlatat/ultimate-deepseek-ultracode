@@ -86,6 +86,29 @@ def codex_cli_semaphore() -> threading.BoundedSemaphore:
 _PRIME_LOCK = threading.Lock()
 _PRIME_GATES: dict[str, threading.Event] = {}
 
+
+def _prime_dict_cap() -> int:
+    # 0 disables eviction (keep all). Default 2048 — large enough that a single
+    # burst's whole prefix-family set is never evicted mid-flight (real fan-outs are
+    # tens of families), small enough to bound a long-lived session.
+    return env_int("CLAUDE_CODEX_GATEWAY_PRIME_DICT_CAP", default=2048)
+
+
+def _evict_oldest(*dicts: dict) -> None:
+    """Bound the prime/lane bookkeeping dicts (they are keyed by prefix-family hash
+    and otherwise grow unbounded across a long session — a real memory leak found by
+    the bench review). Evict the OLDEST inserted keys (dict preserves insertion
+    order) so the most-recent keys — the only ones a LIVE burst still looks up — are
+    always kept. Must be called holding the relevant lock. An evicted Event still
+    works for any waiter already holding a reference; only NEW lookups for that old
+    (completed) key would miss, which is harmless. cap<=0 disables."""
+    cap = _prime_dict_cap()
+    if cap <= 0:
+        return
+    for d in dicts:
+        while len(d) > cap:
+            d.pop(next(iter(d)), None)
+
 # --- Staggered prime serialization -----------------------------------------
 # DeepSeek persists a prefix only AFTER a request finishes — so when N lanes of
 # one prefix family hit concurrently, the first 2-3 race the persist and all miss
@@ -126,6 +149,11 @@ def acquire_serial_slot(key: str) -> bool:
         c = _PRIME_SERIAL_COUNTS.get(key, 0)
         if c >= n:
             return False
+        # On a NEW family key, bound the serial dicts first (evict oldest completed
+        # families). _PRIME_SERIAL_COUNTS must stay monotonic WITHIN a live burst, so
+        # only evict when adding a brand-new key, and never the key we're about to set.
+        if c == 0 and len(_PRIME_SERIAL_COUNTS) >= _prime_dict_cap() > 0:
+            _evict_oldest(_PRIME_SERIAL_COUNTS, _PRIME_SERIAL_LOCKS)
         _PRIME_SERIAL_COUNTS[key] = c + 1
         return True
 
@@ -142,8 +170,14 @@ _LANE_COUNTS: dict[str, int] = {}
 def register_lane_attempt(prompt: str) -> int:
     key = prefix_prime_key(prompt)
     with _LANE_LOCK:
-        _LANE_COUNTS[key] = _LANE_COUNTS.get(key, 0) + 1
-        return _LANE_COUNTS[key]
+        n = _LANE_COUNTS.get(key, 0) + 1
+        _LANE_COUNTS[key] = n
+        # Bound the lane-count dict, but never evict the key we just touched (it is a
+        # live lane being retry-counted) — re-insert it so it's the newest.
+        if len(_LANE_COUNTS) > _prime_dict_cap() > 0:
+            _evict_oldest(_LANE_COUNTS)
+            _LANE_COUNTS[key] = n  # ensure the live key survives as newest
+        return n
 
 
 def should_force_fallback(prompt: str) -> bool:
@@ -183,6 +217,7 @@ def acquire_prime_role(prompt: str) -> tuple[bool, threading.Event | None]:
         if gate is None:
             gate = threading.Event()
             _PRIME_GATES[key] = gate
+            _evict_oldest(_PRIME_GATES)
             return True, gate
         return False, gate
 
