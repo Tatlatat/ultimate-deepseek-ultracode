@@ -1494,11 +1494,28 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
         except Exception:
             pass
 
-    retry_empty = os.getenv("CLAUDE_CODEX_GATEWAY_RETRY_EMPTY", "1").lower() in {"1", "true", "yes", "on"}
+    # Retry-on-empty, SCOPED to isolated single-shot lanes only (Option C from the
+    # fix-retry-empty-variance workflow, vetted by 2 adversarial lenses). reasonix-flash
+    # intermittently returns empty text (~1/15) — a lost task. Retrying recovers it,
+    # BUT a retry inside a shared-prefix BURST fires a fresh cold lookup late, after the
+    # warm prefix has aged/been displaced, re-reading the full ~19K prompt as a MISS
+    # (in_tok ~19135->42967) and dragging the run's weighted cache from 99.7% to ~94%
+    # (measured). So retry ONLY when this lane is NOT part of a prime-gate burst
+    # (prime_gate is None => an isolated lane with no same-family waiters): that keeps
+    # empty-recovery for single subagent calls while review/fan-out bursts never inject
+    # a cold mid-burst lane. Env CLAUDE_CODEX_GATEWAY_RETRY_EMPTY: "burst" (default) =
+    # isolated-only; "1"/"all" = always (legacy, re-introduces burst variance);
+    # "0"/off = never.
+    _re = os.getenv("CLAUDE_CODEX_GATEWAY_RETRY_EMPTY", "burst").lower()
+    retry_empty_isolated = _re not in {"0", "false", "no", "off"}
+    retry_empty_in_burst = _re in {"1", "true", "yes", "on", "all"}
 
     def _run_attempts() -> tuple[str, JSON]:
         last_exc: Exception | None = None
         last_result: tuple[str, JSON] | None = None
+        # Only an isolated lane (no same-family burst) may retry on empty, unless
+        # forced on for all. prime_gate is None => isolated.
+        may_retry_empty = retry_empty_isolated and (retry_empty_in_burst or prime_gate is None)
         for attempt in range(1, max_attempts + 1):
             try:
                 gateway_trace("reasonix_acp_attempt", model=model, attempt=attempt)
@@ -1508,13 +1525,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
                 if exc.error_type == "reasonix_timeout":
                     raise
                 continue
-            # reasonix-flash intermittently returns empty/whitespace text as a
-            # "successful" response (~1/15 lanes measured). That produces a hollow
-            # workflow lane — a lost task. Treat an empty reply as a retryable miss so
-            # a transient empty does not silently drop the lane; keep the last empty
-            # result as the fallback if every attempt comes back empty (the hollow
-            # guard then surfaces it). Off via CLAUDE_CODEX_GATEWAY_RETRY_EMPTY=0.
-            if retry_empty and not str(result[0]).strip() and attempt < max_attempts:
+            if may_retry_empty and not str(result[0]).strip() and attempt < max_attempts:
                 gateway_trace("reasonix_acp_empty_retry", model=model, attempt=attempt)
                 last_result = result
                 continue
