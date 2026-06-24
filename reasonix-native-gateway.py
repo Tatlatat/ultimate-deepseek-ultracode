@@ -1245,6 +1245,14 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     # CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT to the text reasonix should "return"
     # (e.g. a JSON object, or prose to test the narrate->fallback path).
     _mock_text = os.getenv("CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT", os.getenv("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT"))
+    # The general GATEWAY_MOCK switch must also short-circuit this path: lanes routed
+    # through /v1/chat/completions (provider reasonix_cli) reach run_reasonix_acp,
+    # and without a mock here they spawn the real CLI and hang in a CI/test env that
+    # has no reasonix. Fall back to a deterministic reply so the full path is tested.
+    if _mock_text is None and os.getenv(
+        "CLAUDE_REASONIX_GATEWAY_MOCK", os.getenv("CLAUDE_CODEX_GATEWAY_MOCK", "")
+    ).lower() in {"1", "true", "yes", "on"}:
+        _mock_text = f"mock reasonix response for {prompt[:60]}"
     if _mock_text is not None:
         return _mock_text, {
             "input_tokens": max(1, len(prompt) // 4), "output_tokens": max(1, len(_mock_text) // 4),

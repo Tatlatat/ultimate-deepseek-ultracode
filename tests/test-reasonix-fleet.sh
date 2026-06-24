@@ -292,7 +292,9 @@ PY
 "$LAUNCHER" off >/dev/null
 disabled_status="$("$LAUNCHER" status)"
 grep -q "disabled" <<<"$disabled_status" || fail "status should report disabled"
-bare_output="$("$LAUNCHER" "bare prompt")"
+# reasonix flavor defaults to NATIVE subagents; force fleet mode to exercise the
+# fleet-path flag hygiene these assertions validate (--disallowedTools, no --agents).
+bare_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 "$LAUNCHER" "bare prompt")"
 grep -q -- "--mcp-config" <<<"$bare_output" || fail "bare claude-codex should start fleet even when status is disabled"
 grep -q -- "--disallowedTools Agent,Task" <<<"$bare_output" || fail "safe claude-codex should block generic Claude Agent/Task"
 if grep -q -- " --agents {" <<<"$bare_output"; then
@@ -364,7 +366,7 @@ if env.get("CODEX_FLEET_SERVICE_TIER") != "fast":
     raise SystemExit(f"service tier default was not fast: {env}")
 PY
 
-run_output="$("$LAUNCHER" run "test prompt")"
+run_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 "$LAUNCHER" run "test prompt")"
 grep -q -- "--mcp-config" <<<"$run_output" || fail "run should pass mcp config"
 grep -q -- "--disallowedTools Agent,Task" <<<"$run_output" || fail "safe run should block generic Claude Agent/Task"
 if grep -q -- " --agents {" <<<"$run_output"; then
@@ -525,7 +527,8 @@ if "qwenModels.has(model)" not in source or "qwen36-local," not in source:
 PY
 
 "$LAUNCHER" off >/dev/null
-task_output="$("$LAUNCHER" task "one shot prompt")"
+# Force fleet mode (reasonix defaults to native) to validate the non-native task path.
+task_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 "$LAUNCHER" task "one shot prompt")"
 grep -q -- "--mcp-config" <<<"$task_output" || fail "task should pass mcp config"
 if grep -q -- " --agents {" <<<"$task_output"; then
   fail "task should not pass native subagent definitions by default"
@@ -999,7 +1002,11 @@ assert "claude-reasonix-flash" in reg, list(reg)
 assert reg["claude-reasonix-flash"]["provider"] == "reasonix_cli"
 PY
 
-python3 "$ROOT/tests/test-reasonix-acp.py" || fail "reasonix acp driver regression"
+# The acp driver test exercises the REAL run_reasonix_acp path with its own fake
+# driver, so it must run with the general GATEWAY_MOCK switch OFF (this suite
+# exports it=1 for the HTTP probes above).
+env -u CLAUDE_CODEX_GATEWAY_MOCK -u CLAUDE_REASONIX_GATEWAY_MOCK \
+  python3 "$ROOT/tests/test-reasonix-acp.py" || fail "reasonix acp driver regression"
 
 if [[ "${CLAUDE_CODEX_REASONIX_E2E:-0}" == "1" ]]; then
   bash "$ROOT/tests/test-reasonix-e2e.sh" || fail "reasonix e2e"
@@ -1015,4 +1022,7 @@ echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_CODEX_FLAVOR=r
 echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_CODEX_FLAVOR=codex CLAUDE_CODEX_NATIVE_SUBAGENTS=0 python3 "$ROOT/hooks/only-reasonix-fleet.py" >/dev/null 2>&1 && fail "codex flavor must still block the Agent tool"
 echo "PASS: only-codex-fleet flavor-aware"
 
-python3 "$ROOT/tests/test-mcp-reasonix.py" || fail "mcp reasonix flavor regression"
+# Like the acp test, this drives the real reasonix engine via its own fake driver
+# and must not be intercepted by the suite-level GATEWAY_MOCK switch.
+env -u CLAUDE_CODEX_GATEWAY_MOCK -u CLAUDE_REASONIX_GATEWAY_MOCK \
+  python3 "$ROOT/tests/test-mcp-reasonix.py" || fail "mcp reasonix flavor regression"
