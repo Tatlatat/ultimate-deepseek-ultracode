@@ -1029,7 +1029,7 @@ def read_lane_summary_instruction(lane_type: str, tools: Any = None) -> str:
         "{\"findings\": [\"<terse bullet, max 5>\"], "
         "\"files_read\": [\"<filename>\"], "
         "\"flag\": \"<empty, or one sentence if the task is too large for one lane>\"}. "
-        "Do NOT paste raw file contents. Do NOT write prose. Emit the JSON directly."
+        "Do NOT paste raw file contents. No prose, no narration. Emit the JSON directly."
     )
 
 
