@@ -44,7 +44,7 @@ if [ -d "$INSTALL_HOME" ]; then
   else
     # Keep runtime/ and state/ (logs, cost ledgers) unless --purge; remove code.
     for item in \
-      reasonix-native-gateway.py reasonix-fleet-mcp.py ccr-claude-proxy.py \
+      reasonix-native-gateway.py reasonix-fleet-mcp.py \
       bridge-settings.json system-prompt-reasonix.md ; do
       rm -f "$INSTALL_HOME/$item"
     done

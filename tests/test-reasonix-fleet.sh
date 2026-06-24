@@ -7,7 +7,6 @@ HOOK="$ROOT/hooks/only-reasonix-fleet.py"
 WORKFLOW_HOOK="$ROOT/hooks/reasonix-workflow.py"
 MCP_SERVER="$ROOT/reasonix-fleet-mcp.py"
 GATEWAY="$ROOT/reasonix-native-gateway.py"
-CCR_PROXY="$ROOT/ccr-claude-proxy.py"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -29,7 +28,12 @@ assert_file "$HOOK"
 assert_file "$WORKFLOW_HOOK"
 assert_file "$MCP_SERVER"
 assert_file "$GATEWAY"
-assert_file "$CCR_PROXY"
+
+# Slim-down: the launcher must carry NO CCR / router-proxy machinery.
+for banned in "ccr-claude-proxy" "run_claude_with_router" "start_ccr_proxy" "generate_ccr_config" "CCR_PROXY_FILE"; do
+  grep -q "$banned" "$LAUNCHER" && fail "launcher still references removed CCR symbol: $banned"
+done
+[[ -f "$ROOT/ccr-claude-proxy.py" ]] && fail "ccr-claude-proxy.py should be deleted"
 
 RX_PROMPT="$ROOT/system-prompt-reasonix.md"
 [[ -f "$RX_PROMPT" ]] || fail "missing reasonix system prompt"
@@ -88,17 +92,10 @@ export CLAUDE_REASONIX_FLEET_INSTALL_HOME="$ROOT"
 export CLAUDE_REASONIX_FLEET_HOME="$tmp_home/fleet"
 export CLAUDE_BIN="/bin/echo"
 export REASONIX_BIN="/bin/echo"
-export CCR_BIN="/bin/echo"
 export ANTHROPIC_API_KEY="test-anthropic-key"
 export CLAUDE_REASONIX_GATEWAY_MOCK=1
 export CLAUDE_REASONIX_QWEN_SKIP_START=1
 export CLAUDE_REASONIX_KEEP_ROUTER_RUNTIME=1
-
-latest_router_config() {
-  find "$CLAUDE_REASONIX_FLEET_HOME/runtime/router-sessions" \
-    -path '*/.claude-code-router/config.json' \
-    -type f -print 2>/dev/null | sort | tail -n 1
-}
 
 # Regression: the Anthropic streaming lazy path must emit heartbeat content_block_delta
 # events (so the workflow watchdog sees progress) while preserving a correct event
@@ -390,70 +387,6 @@ if grep -q -- "--disallowedTools Agent,Task" <<<"$native_output"; then
   fail "opt-in native gateway mode should not globally block Agent/Task"
 fi
 
-router_output="$("$LAUNCHER" router "router prompt")"
-grep -q -- " --agents {" <<<"$router_output" || fail "router mode should pass native subagent definitions"
-grep -q "claude-reasonix-flash" <<<"$router_output" || fail "router mode should include the Reasonix-backed model"
-grep -q "<CCR-SUBAGENT-MODEL>reasonix-gateway,claude-reasonix-flash</CCR-SUBAGENT-MODEL>" <<<"$router_output" || fail "router mode should tag worker agents for CCR via reasonix-gateway"
-grep -q "router prompt" <<<"$router_output" || fail "router mode should forward prompt args"
-if grep -q -- "--disallowedTools Agent,Task" <<<"$router_output"; then
-  fail "router mode should not globally block Agent/Task"
-fi
-
-router_login_output="$("$LAUNCHER" router-login "router login prompt")"
-grep -q -- " --agents {" <<<"$router_login_output" || fail "router-login mode should pass native subagent definitions"
-grep -q "<CCR-SUBAGENT-MODEL>reasonix-gateway,claude-reasonix-flash</CCR-SUBAGENT-MODEL>" <<<"$router_login_output" || fail "router-login mode should tag worker agents for CCR via reasonix-gateway"
-grep -q "router login prompt" <<<"$router_login_output" || fail "router-login mode should forward prompt args"
-if grep -q -- "--disallowedTools Agent,Task" <<<"$router_login_output"; then
-  fail "router-login mode should not globally block Agent/Task"
-fi
-router_login_config="$(latest_router_config)"
-[[ -n "$router_login_config" ]] || fail "router-login should keep an isolated router config for tests"
-python3 - "$router_login_config" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    config = json.load(fh)
-if config.get("APIKEY") != "":
-    raise SystemExit(f"router-login should start CCR without a static API key: {config.get('APIKEY')!r}")
-PY
-
-router_qwen_output="$("$LAUNCHER" router-qwen "router qwen prompt")"
-grep -q -- " --agents {" <<<"$router_qwen_output" || fail "router-qwen mode should pass native subagent definitions"
-grep -q "<CCR-SUBAGENT-MODEL>qwen36-local,qwen36-mlx</CCR-SUBAGENT-MODEL>" <<<"$router_qwen_output" || fail "router-qwen mode should tag Qwen agents for CCR"
-grep -q "qwen36-mlx" <<<"$router_qwen_output" || fail "router-qwen mode should include the local Qwen model"
-grep -q -- "--model qwen36-mlx" <<<"$router_qwen_output" || fail "router-qwen mode should select the local Qwen model"
-grep -q "router qwen prompt" <<<"$router_qwen_output" || fail "router-qwen mode should forward prompt args"
-if grep -q -- "--disallowedTools Agent,Task" <<<"$router_qwen_output"; then
-  fail "router-qwen mode should not globally block Agent/Task"
-fi
-router_qwen_config="$(latest_router_config)"
-[[ -n "$router_qwen_config" ]] || fail "router-qwen should keep an isolated router config for tests"
-python3 - "$router_qwen_config" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    config = json.load(fh)
-router = config.get("Router", {})
-if router.get("default") != "qwen36-local,qwen36-mlx":
-    raise SystemExit(f"router-qwen should make local Qwen the main route: {router}")
-providers = {provider.get("name"): provider for provider in config.get("Providers", [])}
-ccr_providers = {provider.get("name"): provider for provider in config.get("providers", [])}
-if "qwen36-local" not in ccr_providers:
-    raise SystemExit(f"router-qwen should emit lowercase providers for installed CCR: {ccr_providers}")
-if ccr_providers["qwen36-local"].get("models") != ["qwen36-mlx"]:
-    raise SystemExit(f"router-qwen lowercase providers should include Qwen: {ccr_providers['qwen36-local']}")
-if ccr_providers["qwen36-local"].get("transformer", {}).get("use") != ["Anthropic"]:
-    raise SystemExit(f"router-qwen Qwen provider should use CCR's registerable Anthropic transformer form: {ccr_providers['qwen36-local']}")
-anthropic_models = providers.get("anthropic", {}).get("models", [])
-if "qwen36-mlx" in anthropic_models:
-    raise SystemExit(f"router-qwen should not advertise local Qwen as an Anthropic model: {anthropic_models}")
-qwen_models = providers.get("qwen36-local", {}).get("models", [])
-if qwen_models != ["qwen36-mlx"]:
-    raise SystemExit(f"router-qwen should advertise local Qwen only on qwen36-local: {qwen_models}")
-PY
-
 claude_env_mock="$tmp_home/claude-env-mock"
 cat >"$claude_env_mock" <<'SH'
 #!/usr/bin/env bash
@@ -468,63 +401,6 @@ SH
 chmod +x "$claude_env_mock"
 native_env_output="$(CLAUDE_BIN="$claude_env_mock" CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 "$LAUNCHER" run "native env prompt")"
 grep -q "CLAUDE_CODE_SUBAGENT_MODEL=claude-reasonix-flash" <<<"$native_env_output" || fail "native gateway mode should force built-in subagents to the Reasonix-backed model"
-
-router_env_output="$(CLAUDE_BIN="$claude_env_mock" "$LAUNCHER" router "router env prompt")"
-grep -q "CLAUDE_CODE_SUBAGENT_MODEL=claude-reasonix-flash" <<<"$router_env_output" || fail "router mode should force built-in subagents to the Reasonix-backed model"
-grep -q "ANTHROPIC_CUSTOM_MODEL_OPTION=claude-reasonix-flash" <<<"$router_env_output" || fail "router mode should expose the Reasonix-backed custom model option"
-
-router_env_inherit_output="$(CLAUDE_BIN="$claude_env_mock" CLAUDE_REASONIX_SUBAGENT_MODEL=inherit "$LAUNCHER" router "router inherit prompt")"
-grep -q "CLAUDE_CODE_SUBAGENT_MODEL=inherit" <<<"$router_env_inherit_output" || fail "router mode should honor explicit CLAUDE_REASONIX_SUBAGENT_MODEL overrides"
-
-router_qwen_env_output="$(CLAUDE_BIN="$claude_env_mock" "$LAUNCHER" router-qwen "router qwen env prompt")"
-grep -q "CLAUDE_CODE_SUBAGENT_MODEL=claude-reasonix-flash" <<<"$router_qwen_env_output" || fail "router-qwen should still force subagents to the Reasonix-backed model by default"
-grep -q "ANTHROPIC_BASE_URL=http://127.0.0.1:" <<<"$router_qwen_env_output" || fail "router-qwen should point Claude at the scoped CCR proxy"
-grep -q "ANTHROPIC_AUTH_TOKEN=claude-reasonix-router" <<<"$router_qwen_env_output" || fail "router-qwen should authenticate Claude to the scoped CCR proxy"
-grep -q "ANTHROPIC_CUSTOM_MODEL_OPTION=claude-reasonix-flash" <<<"$router_qwen_env_output" || fail "router-qwen should expose the reasonix model id as Claude Code's custom model option"
-grep -q "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=qwen36-mlx" <<<"$router_qwen_env_output" || fail "router-qwen should name Claude Code's custom model option as Qwen"
-grep -q -- "--model qwen36-mlx" <<<"$router_qwen_env_output" || fail "router-qwen env smoke should still select the local Qwen model"
-
-"$LAUNCHER" generate-ccr-config >/dev/null
-python3 - "$CLAUDE_REASONIX_FLEET_HOME/runtime/ccr-home/.claude-code-router/config.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-if not path.is_file():
-    raise SystemExit(f"missing CCR config: {path}")
-with path.open("r", encoding="utf-8") as fh:
-    config = json.load(fh)
-router = config.get("Router", {})
-if router.get("default") != "anthropic,claude-opus-4-8":
-    raise SystemExit(f"router default should preserve Opus: {router}")
-providers = {provider.get("name"): provider for provider in config.get("Providers", [])}
-for name in ("anthropic", "reasonix-gateway", "deepseek-gateway", "qwen36-local"):
-    if name not in providers:
-        raise SystemExit(f"missing CCR provider {name}: {providers}")
-ccr_providers = {provider.get("name"): provider for provider in config.get("providers", [])}
-for name in ("anthropic", "reasonix-gateway", "deepseek-gateway", "qwen36-local"):
-    if name not in ccr_providers:
-        raise SystemExit(f"missing lowercase CCR provider {name}: {ccr_providers}")
-if "claude-opus-4-8" not in providers["anthropic"].get("models", []):
-    raise SystemExit(f"anthropic provider should advertise claude-opus-4-8: {providers['anthropic']}")
-if ccr_providers["anthropic"].get("transformer", {}).get("use") != ["Anthropic"]:
-    raise SystemExit(f"anthropic provider should use CCR's registerable Anthropic transformer form: {ccr_providers['anthropic']}")
-if providers["reasonix-gateway"].get("models") != ["claude-reasonix-flash"]:
-    raise SystemExit(f"bad reasonix-gateway CCR provider: {providers['reasonix-gateway']}")
-if providers["deepseek-gateway"].get("models") != ["claude-reasonix-flash"]:
-    raise SystemExit(f"bad deepseek-gateway CCR provider: {providers['deepseek-gateway']}")
-if providers["qwen36-local"].get("models") != ["qwen36-mlx"]:
-    raise SystemExit(f"bad Qwen CCR provider: {providers['qwen36-local']}")
-custom_router = Path(config.get("CUSTOM_ROUTER_PATH", ""))
-if not custom_router.is_file():
-    raise SystemExit(f"missing custom router: {custom_router}")
-source = custom_router.read_text(encoding="utf-8")
-if "CCR-SUBAGENT-MODEL" not in source or "req.body.model" not in source:
-    raise SystemExit("custom router should preserve subagent tags and explicit Claude model routing")
-if "qwenModels.has(model)" not in source or "qwen36-local," not in source:
-    raise SystemExit("custom router should route local Qwen explicitly")
-PY
 
 "$LAUNCHER" off >/dev/null
 # Force fleet mode (reasonix defaults to native) to validate the non-native task path.
@@ -607,41 +483,6 @@ if "reasonix-worker" not in script:
     raise SystemExit("native Workflow hook should include a Reasonix worker mapping (deep folds into worker)")
 if "native Claude Code subagents" not in out["hookSpecificOutput"].get("additionalContext", ""):
     raise SystemExit("Workflow hook should add context about the rewrite")
-PY
-
-CLAUDE_REASONIX_WORKFLOW_MODE=router python3 - "$WORKFLOW_HOOK" <<'PY'
-import json
-import os
-import subprocess
-import sys
-
-payload = {
-    "tool_name": "Workflow",
-    "tool_input": {
-        "script": "phase('CodeReview')\nconst result = await agent('inspect repo', { label: 'cloud:security', phase: 'CodeReview' })\nreturn result\n",
-    },
-}
-env = dict(os.environ, CLAUDE_REASONIX_WORKFLOW_MODE="router")
-proc = subprocess.run(
-    [sys.executable, sys.argv[1]],
-    input=json.dumps(payload),
-    text=True,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    check=True,
-    env=env,
-)
-out = json.loads(proc.stdout)
-script = out["hookSpecificOutput"]["updatedInput"]["script"]
-if "__reasonixWorkflowAgent" not in script:
-    raise SystemExit("router Workflow hook did not inject Reasonix wrapper")
-if "reasonix-security" not in script:
-    raise SystemExit("router Workflow hook should route security lanes to reasonix-security")
-if "mcp__reasonix_fleet__run_reasonix_worker" in script:
-    raise SystemExit("router Workflow hook should not route through Reasonix Fleet MCP")
-context = out["hookSpecificOutput"].get("additionalContext", "")
-if "Claude Code Router" not in context or "native Claude Code subagents" not in context:
-    raise SystemExit(f"router Workflow hook should describe CCR native subagents: {context}")
 PY
 
 python3 - "$WORKFLOW_HOOK" <<'PY'
@@ -781,193 +622,6 @@ PY
 kill "$gateway_pid"
 wait "$gateway_pid" 2>/dev/null || true
 
-proxy_port_file="$tmp_home/ccr-proxy.port"
-python3 "$CCR_PROXY" \
-  --host 127.0.0.1 \
-  --port 0 \
-  --port-file "$proxy_port_file" \
-  --target "http://127.0.0.1:9" \
-  --api-key "test-router-key" \
-  --models "claude-opus-4-8,claude-reasonix-flash" \
-  >"$tmp_home/ccr-proxy.log" 2>&1 &
-proxy_pid=$!
-for _ in {1..50}; do
-  if [[ -s "$proxy_port_file" ]]; then
-    break
-  fi
-  if ! kill -0 "$proxy_pid" 2>/dev/null; then
-    cat "$tmp_home/ccr-proxy.log" >&2 || true
-    fail "CCR Claude proxy exited before writing a port file"
-  fi
-  sleep 0.1
-done
-[[ -s "$proxy_port_file" ]] || fail "CCR Claude proxy did not write a port file"
-python3 - "$proxy_port_file" <<'PY'
-import json
-import sys
-import urllib.request
-
-port = open(sys.argv[1], "r", encoding="utf-8").read().strip()
-base = f"http://127.0.0.1:{port}"
-health = json.load(urllib.request.urlopen(base + "/health", timeout=5))
-if health.get("ok") is not True:
-    raise SystemExit(f"bad CCR proxy health: {health}")
-models = json.load(urllib.request.urlopen(base + "/v1/models", timeout=5))
-ids = {item["id"] for item in models.get("data", [])}
-required = {"claude-opus-4-8", "claude-reasonix-flash"}
-if not required.issubset(ids):
-    raise SystemExit(f"CCR proxy should expose Opus and reasonix alias for Claude Code discovery: {models}")
-PY
-kill "$proxy_pid"
-wait "$proxy_pid" 2>/dev/null || true
-
-main_port_file="$tmp_home/main-target.port"
-ccr_port_file="$tmp_home/ccr-target.port"
-direct_port_file="$tmp_home/direct-target.port"
-python3 - "$main_port_file" "$ccr_port_file" "$direct_port_file" <<'PY' &
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
-from pathlib import Path
-import sys
-import threading
-
-main_port_file, ccr_port_file, direct_port_file = sys.argv[1:]
-
-
-class TargetHandler(BaseHTTPRequestHandler):
-    route = ""
-
-    def log_message(self, fmt, *args):
-        return
-
-    def do_POST(self):
-        length = int(self.headers.get("content-length") or "0")
-        body = json.loads((self.rfile.read(length) if length else b"{}").decode() or "{}")
-        data = json.dumps({
-            "route": self.route,
-            "model": body.get("model"),
-            "authorization": self.headers.get("authorization"),
-            "x_api_key": self.headers.get("x-api-key"),
-        }).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-
-def serve(route, port_file):
-    handler = type(f"{route.title()}Handler", (TargetHandler,), {"route": route})
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    Path(port_file).write_text(str(server.server_address[1]), encoding="utf-8")
-    server.serve_forever()
-
-
-threading.Thread(target=serve, args=("main", main_port_file), daemon=True).start()
-threading.Thread(target=serve, args=("ccr", ccr_port_file), daemon=True).start()
-threading.Thread(target=serve, args=("direct", direct_port_file), daemon=True).start()
-threading.Event().wait()
-PY
-targets_pid=$!
-for _ in {1..50}; do
-  [[ -s "$main_port_file" && -s "$ccr_port_file" && -s "$direct_port_file" ]] && break
-  sleep 0.1
-done
-[[ -s "$main_port_file" && -s "$ccr_port_file" && -s "$direct_port_file" ]] || fail "fake proxy targets did not start"
-passthrough_proxy_port_file="$tmp_home/ccr-proxy-passthrough.port"
-python3 "$CCR_PROXY" \
-  --host 127.0.0.1 \
-  --port 0 \
-  --port-file "$passthrough_proxy_port_file" \
-  --target "http://127.0.0.1:$(cat "$ccr_port_file")" \
-  --main-target "http://127.0.0.1:$(cat "$main_port_file")" \
-  --direct-alias-target "http://127.0.0.1:$(cat "$direct_port_file")" \
-  --passthrough-main \
-  --api-key "ccr-test-key" \
-  --models "claude-opus-4-8,claude-reasonix-flash" \
-  --alias-models "claude-reasonix-flash" \
-  --direct-alias-models "claude-reasonix-flash" \
-  >"$tmp_home/ccr-proxy-passthrough.log" 2>&1 &
-passthrough_proxy_pid=$!
-for _ in {1..50}; do
-  if [[ -s "$passthrough_proxy_port_file" ]]; then
-    break
-  fi
-  if ! kill -0 "$passthrough_proxy_pid" 2>/dev/null; then
-    cat "$tmp_home/ccr-proxy-passthrough.log" >&2 || true
-    fail "CCR passthrough proxy exited before writing a port file"
-  fi
-  sleep 0.1
-done
-[[ -s "$passthrough_proxy_port_file" ]] || fail "CCR passthrough proxy did not write a port file"
-python3 - "$passthrough_proxy_port_file" <<'PY'
-import json
-import sys
-import urllib.request
-
-port = open(sys.argv[1], "r", encoding="utf-8").read().strip()
-base = f"http://127.0.0.1:{port}"
-
-def post(model, auth, system=None):
-    payload = {"model": model, "messages": [{"role": "user", "content": "hello"}]}
-    if system is not None:
-        payload["system"] = system
-    body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        base + "/v1/messages",
-        data=body,
-        headers={"content-type": "application/json", "authorization": auth},
-    )
-    return json.load(urllib.request.urlopen(req, timeout=5))
-
-main = post("claude-opus-4-8", "Bearer login-token")
-if main.get("route") != "main" or main.get("authorization") != "Bearer login-token":
-    raise SystemExit(f"main model should passthrough incoming login auth: {main}")
-
-doc_only = post(
-    "claude-opus-4-8",
-    "Bearer login-token",
-    [{"type": "text", "text": "Router docs mention `<CCR-SUBAGENT-MODEL>...` inline, but this is not a subagent tag."}],
-)
-if doc_only.get("route") != "main" or doc_only.get("authorization") != "Bearer login-token":
-    raise SystemExit(f"inline documentation text should not route the main model to CCR: {doc_only}")
-
-alias = post("claude-reasonix-flash", "Bearer login-token")
-if alias.get("route") != "direct" or alias.get("authorization") != "Bearer ccr-test-key":
-    raise SystemExit(f"direct alias model should route to the native gateway target with CCR auth: {alias}")
-
-tagged = post(
-    "claude-opus-4-8",
-    "Bearer login-token",
-    [{"type": "text", "text": "<CCR-SUBAGENT-MODEL>reasonix-gateway,claude-reasonix-flash</CCR-SUBAGENT-MODEL>\nworker"}],
-)
-if tagged.get("route") != "ccr" or tagged.get("authorization") != "Bearer ccr-test-key":
-    raise SystemExit(f"tagged subagent request should route to CCR even when the model is main Claude: {tagged}")
-
-workflow_subagent = post(
-    "claude-opus-4-8",
-    "Bearer login-token",
-    [{
-        "type": "text",
-        "text": (
-            "x-anthropic-billing-header: cc_version=2.1.183; cc_entrypoint=sdk-cli; cc_is_subagent=true;\n"
-            "You are a subagent spawned by a workflow orchestration script."
-        ),
-    }],
-)
-if (
-    workflow_subagent.get("route") != "direct"
-    or workflow_subagent.get("authorization") != "Bearer ccr-test-key"
-    or workflow_subagent.get("model") != "claude-reasonix-flash"
-):
-    raise SystemExit(
-        "workflow subagent requests using the main model should be forced to the Reasonix-backed direct alias target: "
-        f"{workflow_subagent}"
-    )
-PY
-kill "$passthrough_proxy_pid" "$targets_pid"
-wait "$passthrough_proxy_pid" 2>/dev/null || true
-wait "$targets_pid" 2>/dev/null || true
 python3 - "$CLAUDE_REASONIX_FLEET_HOME/runtime/mcp.json" <<'PY'
 import json
 import sys
@@ -990,8 +644,6 @@ LAUNCHER_BIN="$LAUNCHER"
 grep -Eq 'CLAUDE_REASONIX_FLAVOR="?reasonix"?' "$LAUNCHER_BIN" || fail "launcher must set CLAUDE_REASONIX_FLAVOR=reasonix"
 grep -q 'claude-reasonix-flash' "$LAUNCHER_BIN" || fail "launcher reasonix flavor must force claude-reasonix-flash"
 grep -q "REASONIX_BIN" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must export REASONIX_BIN (gateway needs reasonix+node on PATH)"
-grep -q "CLAUDE_REASONIX_CCR_ROUTE.*claude-reasonix-flash" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must route worker agents to claude-reasonix-flash, not the legacy backend"
-grep -q "CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL.*claude-reasonix-flash" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must point deepseek-* agent model at reasonix-flash (else they die Not-logged-in)"
 
 CLAUDE_REASONIX_FLAVOR=reasonix python3 - "$GATEWAY" <<'PY' || fail "reasonix flavor must expose claude-reasonix-flash"
 import importlib.util, sys

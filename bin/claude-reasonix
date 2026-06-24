@@ -13,27 +13,15 @@ RENDERED_SETTINGS="$RUNTIME_DIR/bridge-settings.rendered.json"
 PROMPT_FILE="$INSTALL_HOME/system-prompt-reasonix.md"
 MCP_SERVER_FILE="$INSTALL_HOME/reasonix-fleet-mcp.py"
 GATEWAY_FILE="$INSTALL_HOME/reasonix-native-gateway.py"
-CCR_PROXY_FILE="$INSTALL_HOME/ccr-claude-proxy.py"
 AGENTS_FILE="$RUNTIME_DIR/agents.json"
-CCR_HOME="$RUNTIME_DIR/ccr-home"
-CCR_CONFIG_DIR="$CCR_HOME/.claude-code-router"
-CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
-CCR_CUSTOM_ROUTER_FILE="$CCR_CONFIG_DIR/custom-router.js"
-CCR_AGENTS_FILE="$RUNTIME_DIR/ccr-agents.json"
 
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 # The reasonix CLI binary the Fleet MCP shells out to. Back-compat: honor a legacy
 # CODEX_BIN if set, but the canonical name is REASONIX_BIN.
 REASONIX_BIN="${REASONIX_BIN:-${CODEX_BIN:-reasonix}}"
-CCR_BIN="${CCR_BIN:-ccr}"
 DEFAULT_WORKERS="${CLAUDE_REASONIX_FLEET_DEFAULT_WORKERS:-${CLAUDE_CODEX_FLEET_DEFAULT_WORKERS:-16}}"
 NATIVE_GATEWAY_PID=""
 NATIVE_GATEWAY_URL=""
-CCR_SERVICE_PID=""
-CCR_PROXY_PID=""
-CCR_PROXY_URL=""
-ROUTER_SESSION_RUNTIME_DIR=""
-ROUTER_PREPARED=0
 
 # The reasonix flavor is the only flavor. All invocation names run reasonix.
 # Export both names: hooks/gateway read CLAUDE_REASONIX_FLAVOR first, CLAUDE_CODEX_
@@ -62,8 +50,7 @@ if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
   # for fan-out; without them the workflow falls back to one-MCP-lane-at-a-time.
   : "${CLAUDE_CODEX_WORKFLOW_MODE:=${CLAUDE_REASONIX_WORKFLOW_MODE:-native}}"
   : "${CLAUDE_CODEX_NATIVE_SUBAGENTS:=${CLAUDE_REASONIX_NATIVE_SUBAGENTS:-1}}"
-  export CLAUDE_CODEX_CCR_CODEX_MODEL CLAUDE_CODEX_SUBAGENT_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION
-  export CLAUDE_CODEX_CCR_CODEX_ROUTE CLAUDE_CODEX_CCR_DEEPSEEK_ROUTE CLAUDE_CODEX_CCR_DEEPSEEK_MODEL
+  export CLAUDE_CODEX_SUBAGENT_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION
   export CLAUDE_CODEX_WORKFLOW_MODE CLAUDE_CODEX_NATIVE_SUBAGENTS
   # The gateway is spawned with a stripped PATH that often lacks the fnm shim dir
   # holding `reasonix` AND `node` (reasonix is a Node CLI — it needs node on PATH
@@ -102,9 +89,6 @@ Usage:
   claude-reasonix workers <count>    Set default Reasonix task concurrency
   claude-reasonix task <prompt>      Run one Claude task through Reasonix fleet, then auto-disable
   claude-reasonix run [claude args]  Start Claude in Reasonix Fleet mode
-  claude-reasonix router [args]      Start explicit Claude Code Router native-subagent mode
-  claude-reasonix router-login [args] Experimental CCR mode that tries Claude login passthrough
-  claude-reasonix router-qwen [args] Start CCR mode with local Qwen3.6 as the main model
   claude-reasonix [claude args]      Same as run: always Reasonix Fleet mode
   claude-reasonix plain [args]       Start raw Claude without Reasonix Fleet
   claude-reasonix doctor             Validate local bridge files and commands
@@ -113,8 +97,6 @@ Environment overrides:
   CLAUDE_REASONIX_FLEET_DEFAULT_WORKERS=16
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=0
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 # experimental native gateway mode
-  CCR_BIN=ccr
-  CLAUDE_REASONIX_CCR_PORT=3456
   CLAUDE_REASONIX_ANTHROPIC_API_KEY=... # preferred for router main Anthropic provider
   CLAUDE_REASONIX_CCR_QWEN_MODEL=qwen36-mlx
   CLAUDE_REASONIX_QWEN_ANTHROPIC_BASE_URL=http://127.0.0.1:14000/v1/messages
@@ -143,32 +125,6 @@ text = text.replace("__INSTALL_HOME__", install_home)
 with open(dst, "w", encoding="utf-8") as fh:
     fh.write(text)
 PY
-}
-
-prepare_router_runtime() {
-  if [[ "$ROUTER_PREPARED" == "1" ]]; then
-    return 0
-  fi
-  ensure_dirs
-  ROUTER_SESSION_RUNTIME_DIR="$RUNTIME_DIR/router-sessions/$$"
-  mkdir -p "$ROUTER_SESSION_RUNTIME_DIR"
-  CCR_HOME="$ROUTER_SESSION_RUNTIME_DIR/ccr-home"
-  CCR_CONFIG_DIR="$CCR_HOME/.claude-code-router"
-  CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
-  CCR_CUSTOM_ROUTER_FILE="$CCR_CONFIG_DIR/custom-router.js"
-  CCR_AGENTS_FILE="$ROUTER_SESSION_RUNTIME_DIR/ccr-agents.json"
-  ROUTER_PREPARED=1
-}
-
-cleanup_router_runtime() {
-  if [[ -n "${ROUTER_SESSION_RUNTIME_DIR:-}" && -d "$ROUTER_SESSION_RUNTIME_DIR" ]]; then
-    case "${CLAUDE_REASONIX_KEEP_ROUTER_RUNTIME:-${CLAUDE_CODEX_KEEP_ROUTER_RUNTIME:-0}}" in
-      1|true|TRUE|yes|YES|on|ON) ;;
-      *) rm -rf "$ROUTER_SESSION_RUNTIME_DIR" ;;
-    esac
-  fi
-  ROUTER_SESSION_RUNTIME_DIR=""
-  ROUTER_PREPARED=0
 }
 
 normalize_workers() {
@@ -349,269 +305,6 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 PY
 }
 
-generate_ccr_agents() {
-  ensure_dirs
-  python3 - "$CCR_AGENTS_FILE" <<'PY'
-import json
-import os
-import sys
-
-path = sys.argv[1]
-reasonix_ccr_model = os.getenv("CLAUDE_REASONIX_CCR_MODEL", os.getenv("CLAUDE_CODEX_CCR_CODEX_MODEL", "claude-reasonix-flash"))
-deepseek_model = os.getenv("CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL", os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_MODEL", "claude-reasonix-flash"))
-qwen_model = os.getenv("CLAUDE_REASONIX_CCR_QWEN_MODEL", os.getenv("CLAUDE_CODEX_CCR_QWEN_MODEL", "qwen36-mlx"))
-reasonix_ccr_route = os.getenv("CLAUDE_REASONIX_CCR_ROUTE", os.getenv("CLAUDE_CODEX_CCR_CODEX_ROUTE", "reasonix-gateway,claude-reasonix-flash"))
-deepseek_route = os.getenv("CLAUDE_REASONIX_CCR_DEEPSEEK_ROUTE", os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_ROUTE", "reasonix-gateway,claude-reasonix-flash"))
-qwen_route = os.getenv("CLAUDE_REASONIX_CCR_QWEN_ROUTE", os.getenv("CLAUDE_CODEX_CCR_QWEN_ROUTE", f"qwen36-local,{qwen_model}"))
-tools = [
-    item.strip()
-    for item in os.getenv("CLAUDE_REASONIX_NATIVE_AGENT_TOOLS", os.getenv("CLAUDE_CODEX_NATIVE_AGENT_TOOLS", "Read,Grep,Glob,Bash,Edit,Write,MultiEdit")).split(",")
-    if item.strip()
-]
-
-
-def with_ccr_tag(route, text):
-    return f"<CCR-SUBAGENT-MODEL>{route}</CCR-SUBAGENT-MODEL>\n{text}"
-
-
-def agent(description, prompt, model):
-    return {
-        "description": description,
-        "prompt": prompt,
-        "tools": tools,
-        "disallowedTools": ["Agent", "Task"],
-        "model": model,
-        "effort": "xhigh",
-        "permissionMode": "acceptEdits",
-    }
-
-
-reasonix_ccr_prompt = with_ccr_tag(
-    reasonix_ccr_route,
-    (
-        "You are a native Claude Code subagent routed by Claude Code Router to "
-        "Reasonix through the claude-reasonix local gateway. Do the worker-lane task "
-        "directly with the available repository tools. Use fast, decisive "
-        "coding-agent behavior, preserve user changes, and return concise "
-        "evidence-backed results."
-    ),
-)
-deepseek_prompt = with_ccr_tag(
-    deepseek_route,
-    (
-        "You are a native Claude Code subagent routed by Claude Code Router to "
-        "DeepSeek through the claude-reasonix local gateway. Prefer broad "
-        "architectural reasoning, database/API analysis, and deep review. Use "
-        "repository tools when needed and keep the final output compact and "
-        "actionable."
-    ),
-)
-qwen_prompt = with_ccr_tag(
-    qwen_route,
-    (
-        "You are a native Claude Code subagent routed by Claude Code Router to "
-        "the user's local Qwen3.6 MLX stack. Use concise, tool-aware coding "
-        "agent behavior. Prefer local analysis, repository search, and "
-        "structured findings that the main Claude agent can verify cheaply."
-    ),
-)
-
-agents = {
-    "reasonix-worker": agent(
-        "General Reasonix worker for implementation, file analysis, repo search, and focused worker lanes.",
-        reasonix_ccr_prompt,
-        reasonix_ccr_model,
-    ),
-    # Prefix-cache stability: keep the per-ROUTE base (reasonix/qwen genuinely route
-    # to different models) but drop the per-ROLE suffix that used to fork a fresh
-    # prefix family per agent type. Role intent rides the task tail + the distinct
-    # `description` Claude routes on; same-route lanes now share one prefix.
-    "reasonix-security": agent(
-        "Reasonix security review worker. Use for security, auth, secrets, permissions, injection, and abuse-case lanes.",
-        reasonix_ccr_prompt,
-        reasonix_ccr_model,
-    ),
-    "reasonix-reviewer": agent(
-        "Reasonix code-review worker. Use for CodeReview lanes, regression checks, architecture/infra review, and independent diff review.",
-        reasonix_ccr_prompt,
-        reasonix_ccr_model,
-    ),
-    "reasonix-verify": agent(
-        "Reasonix verification worker. Use for test, verify, reproduction, and acceptance-criteria lanes.",
-        reasonix_ccr_prompt,
-        reasonix_ccr_model,
-    ),
-    "qwen-worker": agent(
-        "Local Qwen3.6 worker. Use for cheap repo exploration, broad search, first-pass bug hunting, and local reasoning lanes.",
-        qwen_prompt,
-        qwen_model,
-    ),
-    "qwen-research": agent(
-        "Local Qwen3.6 research worker. Use for deep local research, source gathering through allowed tools, and compact evidence summaries.",
-        qwen_prompt + "\n\nReturn compact evidence and explicit uncertainty; avoid long narrative unless requested.",
-        qwen_model,
-    ),
-}
-
-with open(path, "w", encoding="utf-8") as fh:
-    json.dump(agents, fh, indent=2)
-    fh.write("\n")
-PY
-  printf '%s\n' "$CCR_AGENTS_FILE"
-}
-
-ccr_agents_json() {
-  generate_ccr_agents >/dev/null
-  python3 - "$CCR_AGENTS_FILE" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    print(json.dumps(json.load(fh), separators=(",", ":")))
-PY
-}
-
-generate_ccr_config() {
-  ensure_dirs
-  mkdir -p "$CCR_CONFIG_DIR"
-  local ccr_port="${1:-${CLAUDE_REASONIX_CCR_PORT:-${CLAUDE_CODEX_CCR_PORT:-3456}}}"
-  local gateway_url="${2:-${NATIVE_GATEWAY_URL:-http://127.0.0.1:65535}}"
-  python3 - "$CCR_CONFIG_FILE" "$CCR_CUSTOM_ROUTER_FILE" "$ccr_port" "$gateway_url" <<'PY'
-import json
-import os
-import sys
-from pathlib import Path
-
-config_path = Path(sys.argv[1])
-router_path = Path(sys.argv[2])
-ccr_port = int(sys.argv[3])
-gateway_url = sys.argv[4].rstrip("/")
-
-api_key = os.getenv("CLAUDE_REASONIX_CCR_API_KEY", os.getenv("CLAUDE_CODEX_CCR_API_KEY", "claude-reasonix-router"))
-main_model = os.getenv("CLAUDE_REASONIX_ROUTER_MAIN_MODEL", os.getenv("CLAUDE_CODEX_ROUTER_MAIN_MODEL", "claude-opus-4-8"))
-qwen_model = os.getenv("CLAUDE_REASONIX_CCR_QWEN_MODEL", os.getenv("CLAUDE_CODEX_CCR_QWEN_MODEL", "qwen36-mlx"))
-qwen_models = [
-    item.strip()
-    for item in os.getenv("CLAUDE_REASONIX_CCR_QWEN_MODELS", os.getenv("CLAUDE_CODEX_CCR_QWEN_MODELS", qwen_model)).split(",")
-    if item.strip()
-]
-if qwen_model not in qwen_models:
-    qwen_models.insert(0, qwen_model)
-main_provider = "qwen36-local" if main_model in qwen_models else "anthropic"
-anthropic_key = (
-    os.getenv("CLAUDE_REASONIX_ANTHROPIC_API_KEY", os.getenv("CLAUDE_CODEX_ANTHROPIC_API_KEY"))
-    or os.getenv("ANTHROPIC_API_KEY")
-    or os.getenv("ANTHROPIC_AUTH_TOKEN")
-    or "missing-anthropic-api-key"
-)
-anthropic_models = [
-    item.strip()
-    for item in os.getenv(
-        "CLAUDE_CODEX_ANTHROPIC_MODELS",
-        "claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5,claude-opus-4-5,claude-sonnet-4-5",
-    ).split(",")
-    if item.strip()
-]
-if main_provider == "anthropic" and main_model not in anthropic_models:
-    anthropic_models.insert(0, main_model)
-
-providers = [
-    {
-        "name": "anthropic",
-        "api_base_url": os.getenv("CLAUDE_REASONIX_ANTHROPIC_BASE_URL", os.getenv("CLAUDE_CODEX_ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")),
-        "api_key": anthropic_key,
-        "models": anthropic_models,
-        "transformer": {"use": ["Anthropic"]},
-    },
-    {
-        "name": "reasonix-gateway",
-        "api_base_url": gateway_url + "/v1/chat/completions",
-        "api_key": "local-gateway",
-        "models": [os.getenv("CLAUDE_REASONIX_CCR_MODEL", os.getenv("CLAUDE_CODEX_CCR_CODEX_MODEL", "claude-reasonix-flash"))],
-    },
-    {
-        "name": "deepseek-gateway",
-        "api_base_url": gateway_url + "/v1/chat/completions",
-        "api_key": "local-gateway",
-        "models": [os.getenv("CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL", os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_MODEL", "claude-reasonix-flash"))],
-    },
-    {
-        "name": "qwen36-local",
-        "api_base_url": os.getenv("CLAUDE_REASONIX_QWEN_ANTHROPIC_BASE_URL", os.getenv("CLAUDE_CODEX_QWEN_ANTHROPIC_BASE_URL", "http://127.0.0.1:14000/v1/messages")),
-        "api_key": os.getenv("CLAUDE_REASONIX_QWEN_API_KEY", os.getenv("CLAUDE_CODEX_QWEN_API_KEY", "sk-local-qwen36")),
-        "models": qwen_models,
-        "transformer": {"use": ["Anthropic"]},
-    },
-]
-
-config = {
-    "LOG": os.getenv("CLAUDE_REASONIX_CCR_LOG", os.getenv("CLAUDE_CODEX_CCR_LOG", "false")).lower() in {"1", "true", "yes", "on"},
-    "HOST": os.getenv("CLAUDE_REASONIX_CCR_HOST", os.getenv("CLAUDE_CODEX_CCR_HOST", "127.0.0.1")),
-    "PORT": ccr_port,
-    "APIKEY": api_key,
-    "API_TIMEOUT_MS": int(os.getenv("CLAUDE_REASONIX_CCR_TIMEOUT_MS", os.getenv("CLAUDE_CODEX_CCR_TIMEOUT_MS", "600000"))),
-    "Providers": providers,
-    "providers": providers,
-    "Router": {
-        "default": f"{main_provider},{main_model}",
-        "think": f"{main_provider},{main_model}",
-        "longContext": f"{main_provider},{main_model}",
-        "longContextThreshold": int(os.getenv("CLAUDE_REASONIX_CCR_LONG_CONTEXT_THRESHOLD", os.getenv("CLAUDE_CODEX_CCR_LONG_CONTEXT_THRESHOLD", "60000"))),
-    },
-    "CUSTOM_ROUTER_PATH": str(router_path),
-}
-
-# Map each gateway-served model name to its "provider,model" route, derived
-# from the ACTUAL provider definitions above (the gateway / deepseek providers).
-# In reasonix flavor these models are claude-reasonix-flash, which begins with
-# "claude" and would otherwise fall through to the anthropic fallback below and
-# 401 with an invalid x-api-key. This explicit table routes whatever model the
-# local gateway providers serve to the gateway, regardless of its name.
-gateway_routes = {}
-for _prov in providers:
-    if _prov.get("name") in ("reasonix-gateway", "deepseek-gateway"):
-        for _m in _prov.get("models", []):
-            if _m:
-                gateway_routes[_m] = f"{_prov['name']},{_m}"
-
-router_source = """
-const qwenModels = new Set(__QWEN_MODELS__);
-const gatewayRoutes = __GATEWAY_ROUTES__;
-
-module.exports = async function claudeReasonixRouter(req) {
-  const body = req.body || {};
-  const system = Array.isArray(body.system) ? body.system : [];
-  const subagentPrompt = system[1] && typeof system[1].text === "string" ? system[1].text : "";
-  if (subagentPrompt.startsWith("<CCR-SUBAGENT-MODEL>")) {
-    return null;
-  }
-  const model = typeof req.body.model === "string" ? req.body.model : "";
-  if (model.includes(",")) {
-    return model;
-  }
-  if (model === "claude-reasonix-flash") {
-    return "reasonix-gateway,claude-reasonix-flash";
-  }
-  if (qwenModels.has(model)) {
-    return "qwen36-local," + model;
-  }
-  if (Object.prototype.hasOwnProperty.call(gatewayRoutes, model)) {
-    return gatewayRoutes[model];
-  }
-  if (model.startsWith("claude") || model.startsWith("anthropic")) {
-    return "anthropic," + model;
-  }
-  return null;
-};
-""".replace("__QWEN_MODELS__", json.dumps(qwen_models)).replace("__GATEWAY_ROUTES__", json.dumps(gateway_routes)).lstrip()
-
-config_path.parent.mkdir(parents=True, exist_ok=True)
-config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-router_path.write_text(router_source, encoding="utf-8")
-PY
-  printf '%s\n' "$CCR_CONFIG_FILE"
-}
-
 start_native_gateway() {
   ensure_dirs
   [[ -f "$GATEWAY_FILE" ]] || {
@@ -672,92 +365,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
 PY
 }
 
-start_ccr_service() {
-  local port="$1"
-  local log_file="$RUNTIME_DIR/ccr.log"
-  mkdir -p "$CCR_CONFIG_DIR"
-
-  HOME="$CCR_HOME" "$CCR_BIN" stop >>"$log_file" 2>&1 || true
-  HOME="$CCR_HOME" "$CCR_BIN" start >>"$log_file" 2>&1 &
-  CCR_SERVICE_PID="$!"
-
-  case "$(basename "$CCR_BIN")" in
-    echo)
-      wait "$CCR_SERVICE_PID" 2>/dev/null || true
-      CCR_SERVICE_PID=""
-      return 0
-      ;;
-  esac
-
-  python3 - "$port" "$log_file" "$CCR_SERVICE_PID" <<'PY'
-import os
-import sys
-import time
-import urllib.error
-import urllib.request
-
-port = sys.argv[1]
-log_file = sys.argv[2]
-pid = int(sys.argv[3])
-url = f"http://127.0.0.1:{port}/health"
-for _ in range(100):
-    try:
-        with urllib.request.urlopen(url, timeout=0.5) as response:
-            if response.status < 500:
-                raise SystemExit(0)
-    except Exception:
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            break
-        time.sleep(0.05)
-raise SystemExit(f"Claude Code Router did not become healthy; see {log_file}")
-PY
-}
-
-stop_ccr_service() {
-  local log_file="$RUNTIME_DIR/ccr.log"
-  HOME="$CCR_HOME" "$CCR_BIN" stop >>"$log_file" 2>&1 || true
-  if [[ -n "${CCR_SERVICE_PID:-}" ]] && kill -0 "$CCR_SERVICE_PID" 2>/dev/null; then
-    kill "$CCR_SERVICE_PID" 2>/dev/null || true
-    wait "$CCR_SERVICE_PID" 2>/dev/null || true
-  fi
-  CCR_SERVICE_PID=""
-}
-
-ccr_model_list() {
-  python3 - "$CCR_CONFIG_FILE" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    config = json.load(fh)
-seen = set()
-models = []
-for provider in config.get("Providers", []):
-    for model in provider.get("models", []):
-        if model not in seen:
-            seen.add(model)
-            models.append(model)
-print(",".join(models))
-PY
-}
-
-ccr_alias_model_list() {
-  python3 - "$CCR_CONFIG_FILE" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    config = json.load(fh)
-aliases = []
-for provider in config.get("Providers", []):
-    if provider.get("name") in {"reasonix-gateway", "deepseek-gateway", "qwen36-local"}:
-        aliases.extend(provider.get("models", []))
-print(",".join(dict.fromkeys(aliases)))
-PY
-}
-
 ensure_qwen36_ready() {
   case "${CLAUDE_REASONIX_QWEN_SKIP_START:-${CLAUDE_CODEX_QWEN_SKIP_START:-0}}" in
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
@@ -778,71 +385,6 @@ ensure_qwen36_ready() {
   exit 1
 }
 
-start_ccr_proxy() {
-  local proxy_port="$1"
-  local ccr_port="$2"
-  local ccr_api_key="${3-claude-reasonix-router}"
-  local passthrough_main="${4:-0}"
-  local port_file="$RUNTIME_DIR/ccr-proxy.$$.port"
-  local log_file="$RUNTIME_DIR/ccr-proxy.log"
-  local models
-  models="$(ccr_model_list)"
-  local aliases
-  aliases="$(ccr_alias_model_list)"
-  local proxy_args=(
-    --host "127.0.0.1"
-    --port "$proxy_port"
-    --port-file "$port_file"
-    --target "http://127.0.0.1:$ccr_port"
-    --main-target "${CLAUDE_REASONIX_MAIN_ANTHROPIC_BASE_URL:-${CLAUDE_CODEX_MAIN_ANTHROPIC_BASE_URL:-https://api.anthropic.com}}"
-    --api-key "$ccr_api_key"
-    --models "$models"
-    --alias-models "$aliases"
-  )
-  if [[ -n "${NATIVE_GATEWAY_URL:-}" ]]; then
-    proxy_args+=(
-      --direct-alias-target "$NATIVE_GATEWAY_URL"
-      --direct-alias-models "${CLAUDE_REASONIX_DIRECT_ALIAS_MODELS:-${CLAUDE_CODEX_DIRECT_ALIAS_MODELS:-claude-reasonix-flash}}"
-    )
-  fi
-  if [[ "$passthrough_main" == "1" ]]; then
-    proxy_args+=(--passthrough-main)
-  fi
-  rm -f "$port_file"
-
-  python3 "$CCR_PROXY_FILE" "${proxy_args[@]}" >>"$log_file" 2>&1 &
-  CCR_PROXY_PID="$!"
-
-  local i
-  for i in {1..100}; do
-    if [[ -s "$port_file" ]]; then
-      local actual_port
-      actual_port="$(tr -d '[:space:]' < "$port_file")"
-      CCR_PROXY_URL="http://127.0.0.1:$actual_port"
-      rm -f "$port_file"
-      return 0
-    fi
-    if ! kill -0 "$CCR_PROXY_PID" 2>/dev/null; then
-      echo "CCR Claude proxy exited before startup; see $log_file" >&2
-      exit 1
-    fi
-    sleep 0.05
-  done
-
-  echo "CCR Claude proxy did not start; see $log_file" >&2
-  kill "$CCR_PROXY_PID" 2>/dev/null || true
-  exit 1
-}
-
-stop_ccr_proxy() {
-  if [[ -n "${CCR_PROXY_PID:-}" ]] && kill -0 "$CCR_PROXY_PID" 2>/dev/null; then
-    kill "$CCR_PROXY_PID" 2>/dev/null || true
-    wait "$CCR_PROXY_PID" 2>/dev/null || true
-  fi
-  CCR_PROXY_PID=""
-  CCR_PROXY_URL=""
-}
-
 allowed_tools_csv() {
   printf '%s\n' "mcp__reasonix_fleet__*"
 }
@@ -851,13 +393,6 @@ bridge_prompt() {
   local workers
   workers="$(current_workers)"
   printf 'This Claude Code session is running Reasonix Fleet dynamic mode. Use the reasonix_fleet MCP server to dispatch any number of Reasonix CLI subagents. Default concurrent Reasonix tasks: %s.\n\n' "$workers"
-  cat "$PROMPT_FILE"
-}
-
-router_prompt() {
-  local workers
-  workers="$(current_workers)"
-  printf 'This Claude Code session is running explicit Claude Code Router mode. Ordinary non-subagent work stays in Claude Code and keeps the selected main Claude model. Native reasonix-* and deepseek-* worker lanes are routed by CCR tags to Reasonix/DeepSeek aliases. Reasonix Fleet MCP remains available as fallback with default concurrency %s.\n\n' "$workers"
   cat "$PROMPT_FILE"
 }
 
@@ -872,10 +407,6 @@ run_claude_with_fleet() {
   }
   [[ -f "$MCP_SERVER_FILE" ]] || {
     echo "missing Reasonix Fleet MCP server: $MCP_SERVER_FILE" >&2
-    exit 1
-  }
-  [[ -f "$CCR_PROXY_FILE" ]] || {
-    echo "missing CCR Claude proxy: $CCR_PROXY_FILE" >&2
     exit 1
   }
 
@@ -924,127 +455,6 @@ run_claude_with_fleet() {
 
 run_claude() {
   run_claude_with_fleet "$@"
-}
-
-run_claude_with_router() {
-  local router_auth_mode="${1:-api}"
-  shift || true
-  prepare_router_runtime
-  [[ -f "$SETTINGS_FILE" ]] || {
-    echo "missing bridge settings: $SETTINGS_FILE" >&2
-    exit 1
-  }
-  [[ -f "$PROMPT_FILE" ]] || {
-    echo "missing bridge prompt: $PROMPT_FILE" >&2
-    exit 1
-  }
-  [[ -f "$MCP_SERVER_FILE" ]] || {
-    echo "missing Reasonix Fleet MCP server: $MCP_SERVER_FILE" >&2
-    exit 1
-  }
-
-  local qwen_main_model="${CLAUDE_REASONIX_CCR_QWEN_MODEL:-${CLAUDE_CODEX_CCR_QWEN_MODEL:-qwen36-mlx}}"
-  local selected_main_model=""
-  if [[ "$router_auth_mode" == "qwen" ]]; then
-    ensure_qwen36_ready
-    selected_main_model="${CLAUDE_REASONIX_ROUTER_MAIN_MODEL:-${CLAUDE_CODEX_ROUTER_MAIN_MODEL:-$qwen_main_model}}"
-  elif [[ "$router_auth_mode" == "api" && -z "${CLAUDE_REASONIX_ANTHROPIC_API_KEY:-${CLAUDE_CODEX_ANTHROPIC_API_KEY:-}}${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
-    echo "warning: claude-reasonix router mode needs an Anthropic API key/token for CCR to preserve the main Claude model route" >&2
-  elif [[ "$router_auth_mode" == "login" ]]; then
-    echo "warning: claude-reasonix router-login is experimental; it only works if Claude Code sends its login auth to the local gateway" >&2
-  fi
-
-  generate_config >/dev/null
-  render_settings
-  local prompt
-  if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" && -f "$INSTALL_HOME/system-prompt-reasonix.md" ]]; then
-    prompt="$(cat "$INSTALL_HOME/system-prompt-reasonix.md")"
-  else
-    prompt="$(router_prompt)"
-  fi
-  local base_args=(
-    --mcp-config "$MCP_FILE"
-    --settings "$RENDERED_SETTINGS"
-    --append-system-prompt "$prompt"
-  )
-
-  local ccr_port
-  ccr_port="${CLAUDE_REASONIX_CCR_PORT:-${CLAUDE_CODEX_CCR_PORT:-$(find_free_port)}}"
-  local proxy_port
-  proxy_port="${CLAUDE_REASONIX_CCR_PROXY_PORT:-${CLAUDE_CODEX_CCR_PROXY_PORT:-$(find_free_port)}}"
-  local agent_defs
-  agent_defs="$(ccr_agents_json)"
-  local ccr_api_key="${CLAUDE_REASONIX_CCR_API_KEY:-${CLAUDE_CODEX_CCR_API_KEY-claude-reasonix-router}}"
-  local passthrough_main=0
-  if [[ "$router_auth_mode" == "login" ]]; then
-    ccr_api_key="${CLAUDE_REASONIX_CCR_API_KEY:-${CLAUDE_CODEX_CCR_API_KEY-}}"
-    passthrough_main=1
-  fi
-  local custom_model_option="${ANTHROPIC_CUSTOM_MODEL_OPTION:-claude-reasonix-flash}"
-  local custom_model_option_name="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-$custom_model_option}"
-  local custom_model_option_description="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Reasonix-backed native Claude Code subagent model routed by CCR}"
-  local forced_subagent_model="${CLAUDE_REASONIX_SUBAGENT_MODEL:-${CLAUDE_CODEX_SUBAGENT_MODEL:-${CLAUDE_CODEX_CCR_CODEX_MODEL:-claude-reasonix-flash}}}"
-  if [[ "$router_auth_mode" == "qwen" ]]; then
-    custom_model_option="${ANTHROPIC_CUSTOM_MODEL_OPTION:-$selected_main_model}"
-    custom_model_option_name="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-$selected_main_model}"
-    custom_model_option_description="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Local Qwen3.6 model routed by CCR}"
-  fi
-
-  start_native_gateway
-  if [[ "$router_auth_mode" == "qwen" ]]; then
-    CLAUDE_CODEX_CCR_API_KEY="$ccr_api_key" \
-      CLAUDE_CODEX_ROUTER_MAIN_MODEL="$selected_main_model" \
-      generate_ccr_config "$ccr_port" "$NATIVE_GATEWAY_URL" >/dev/null
-  else
-    CLAUDE_CODEX_CCR_API_KEY="$ccr_api_key" generate_ccr_config "$ccr_port" "$NATIVE_GATEWAY_URL" >/dev/null
-  fi
-  start_ccr_service "$ccr_port"
-  start_ccr_proxy "$proxy_port" "$ccr_port" "$ccr_api_key" "$passthrough_main"
-
-  set +e
-  if [[ "$router_auth_mode" == "login" ]]; then
-      env -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
-      CLAUDE_CODEX_NATIVE_SUBAGENTS=1 \
-      CLAUDE_CODEX_WORKFLOW_MODE=router \
-      CLAUDE_CODE_SUBAGENT_MODEL="$forced_subagent_model" \
-      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY="${CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:-1}" \
-      ANTHROPIC_BASE_URL="$CCR_PROXY_URL" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION="$custom_model_option" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="$custom_model_option_name" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="$custom_model_option_description" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES="${ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES:-effort,xhigh_effort,thinking,interleaved_thinking}" \
-      NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}" \
-      "$CLAUDE_BIN" \
-        "${base_args[@]}" \
-        --agents "$agent_defs" \
-        "$@"
-  else
-    local claude_args=("${base_args[@]}" --agents "$agent_defs")
-    if [[ -n "$selected_main_model" ]]; then
-      claude_args+=(--model "$selected_main_model")
-    fi
-    CLAUDE_CODEX_NATIVE_SUBAGENTS=1 \
-      CLAUDE_CODEX_WORKFLOW_MODE=router \
-      CLAUDE_CODE_SUBAGENT_MODEL="$forced_subagent_model" \
-      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY="${CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:-1}" \
-      ANTHROPIC_BASE_URL="$CCR_PROXY_URL" \
-      ANTHROPIC_AUTH_TOKEN="$ccr_api_key" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION="$custom_model_option" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="$custom_model_option_name" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="$custom_model_option_description" \
-      ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES="${ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES:-effort,xhigh_effort,thinking,interleaved_thinking}" \
-      NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}" \
-      "$CLAUDE_BIN" \
-        "${claude_args[@]}" \
-        "$@"
-  fi
-  local code=$?
-  set -e
-  stop_ccr_proxy
-  stop_ccr_service
-  stop_native_gateway
-  cleanup_router_runtime
-  return "$code"
 }
 
 run_plain_claude() {
@@ -1174,19 +584,13 @@ doctor() {
   [[ -f "$INSTALL_HOME/hooks/reasonix-workflow.py" ]] || { echo "missing workflow hook" >&2; ok=1; }
   [[ -f "$MCP_SERVER_FILE" ]] || { echo "missing $MCP_SERVER_FILE" >&2; ok=1; }
   [[ -f "$GATEWAY_FILE" ]] || { echo "missing $GATEWAY_FILE" >&2; ok=1; }
-  [[ -f "$CCR_PROXY_FILE" ]] || { echo "missing $CCR_PROXY_FILE" >&2; ok=1; }
   python3 -m json.tool "$SETTINGS_FILE" >/dev/null || ok=1
   generate_config >/dev/null || ok=1
   generate_agents >/dev/null || ok=1
-  generate_ccr_agents >/dev/null || ok=1
-  generate_ccr_config >/dev/null || ok=1
   python3 -m json.tool "$MCP_FILE" >/dev/null || ok=1
   python3 -m json.tool "$AGENTS_FILE" >/dev/null || ok=1
-  python3 -m json.tool "$CCR_AGENTS_FILE" >/dev/null || ok=1
-  python3 -m json.tool "$CCR_CONFIG_FILE" >/dev/null || ok=1
   python3 -m py_compile "$MCP_SERVER_FILE" || ok=1
   python3 -m py_compile "$GATEWAY_FILE" || ok=1
-  python3 -m py_compile "$CCR_PROXY_FILE" || ok=1
   "$CLAUDE_BIN" --version >/dev/null || { echo "claude command failed" >&2; ok=1; }
   command -v reasonix >/dev/null || { echo "reasonix command not found" >&2; ok=1; }
   report_active_sessions
@@ -1243,14 +647,6 @@ main() {
       shift || true
       generate_agents
       ;;
-    generate-ccr-agents)
-      shift || true
-      generate_ccr_agents
-      ;;
-    generate-ccr-config)
-      shift || true
-      generate_ccr_config
-      ;;
     doctor)
       shift || true
       doctor
@@ -1272,18 +668,6 @@ else:
     if s["claude_equiv_usd"] > 0:
         print("  vs Claude: would be $%.4f -> saved ~$%.4f (%.1f%%)" % (s["claude_equiv_usd"], s["saved_usd"], s["saved_pct"]))
 PY
-      ;;
-    router|ccr)
-      shift || true
-      run_claude_with_router api "$@"
-      ;;
-    router-login|ccr-login|router-subscription)
-      shift || true
-      run_claude_with_router login "$@"
-      ;;
-    router-qwen|ccr-qwen|qwen-router)
-      shift || true
-      run_claude_with_router qwen "$@"
       ;;
     run)
       shift || true

@@ -55,7 +55,7 @@ say "2/6  Installing the fleet into $INSTALL_HOME"
 mkdir -p "$INSTALL_HOME/hooks" "$INSTALL_HOME/runtime/logs" "$INSTALL_HOME/state"
 # Copy the shipped components (NOT scratch: runtime ledgers/ports, .git, .superpowers).
 for item in \
-  reasonix-native-gateway.py reasonix-fleet-mcp.py ccr-claude-proxy.py \
+  reasonix-native-gateway.py reasonix-fleet-mcp.py \
   bridge-settings.json system-prompt-reasonix.md ; do
   cp -f "$SRC/$item" "$INSTALL_HOME/$item"
 done
