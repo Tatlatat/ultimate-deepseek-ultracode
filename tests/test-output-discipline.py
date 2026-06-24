@@ -119,6 +119,27 @@ def main() -> int:
     check(gw.output_discipline_budget("edit") == 4096, "edit budget env-overridable")
     check(gw.output_discipline_budget("unknown") == 1024, "default budget env-overridable")
 
+    # --- (c) REGRESSION: directives must not poison the classifier --------------
+    # Final-matrix bug: F's directive contained 'write'/'apply'. The call-site
+    # classifier sees the full assembled prompt (task + directive), so those
+    # keywords flipped EVERY lane to 'edit' -> F's per-type cap never applied ->
+    # output did not drop. F/A directive text must carry NO _EDIT_INTENT_RE token.
+    import re as _re
+    _clear_env()
+    os.environ[FLAG] = "1"
+    os.environ["CLAUDE_REASONIX_GATEWAY_READ_SUMMARY"] = "1"
+    _edit_re = _re.compile(
+        r"\b(edit|write|create|modify|apply|patch|implement|add|delete|rename|refactor)\b", _re.I)
+    _fd = gw.output_discipline_directive()
+    _ad = gw.read_lane_summary_instruction("read", None)
+    check(not _edit_re.findall(_fd),
+          f"F directive carries no edit-intent keyword (would poison classify): {set(w.lower() for w in _edit_re.findall(_fd))}")
+    check(not _edit_re.findall(_ad),
+          f"A instruction carries no edit-intent keyword: {set(w.lower() for w in _edit_re.findall(_ad))}")
+    _read_task = "Read ONLY /x/foo.py and summarize its purpose."
+    check(gw.classify_lane_type(None, _read_task + "\n\n" + _fd + "\n\n" + _ad) == "read",
+          "read task + F+A directives still classifies 'read' (the cap actually applies)")
+
     _clear_env()
     print(f"\n{_PASS} passed, {_FAIL} failed")
     return 1 if _FAIL else 0

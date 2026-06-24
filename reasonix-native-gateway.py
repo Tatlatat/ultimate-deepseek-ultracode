@@ -1325,15 +1325,20 @@ def output_discipline_directive() -> str:
         os.getenv("CLAUDE_CODEX_GATEWAY_OUTPUT_DISCIPLINE_DIRECTIVE", "1"),
     ).lower() not in {"1", "true", "yes", "on"}:
         return ""
+    # NOTE: this text must contain NO _EDIT_INTENT_RE keyword (edit/write/apply/
+    # modify/…). The call-site classifier sees the full assembled prompt (task +
+    # this directive), so an edit keyword here would flip EVERY lane to 'edit' and
+    # silently disable F's per-type cap. Phrased to avoid those tokens; the
+    # classifier therefore keys only off the lane's actual task text.
     return (
         "OUTPUT DISCIPLINE (obey exactly):\n"
         "- Be terse. No narration ('I will now…', 'Let me…', 'Sure, here is…'), "
         "no restating or summarizing the task, no chain-of-thought prose. Lead "
         "with the answer.\n"
-        "- For edits: emit a MINIMAL unified diff / SEARCH-REPLACE block ONLY. "
-        "NEVER reprint unchanged code, NEVER write placeholder comments like "
-        "'// rest unchanged' or '# ... existing code ...'. Show only the lines "
-        "that change, with just enough context to apply them."
+        "- For code changes: emit a MINIMAL unified diff / SEARCH-REPLACE block "
+        "ONLY. Do NOT reprint unchanged code, do NOT leave placeholder comments "
+        "like '// rest unchanged' or '# ... existing code ...'. Show only the "
+        "lines that differ, with just enough context to locate them."
     )
 
 
@@ -1541,11 +1546,15 @@ def openai_messages_to_prompt(messages: list[JSON], tools: Any = None) -> str:
     # directive. Only fires for read lanes when READ_SUMMARY is on AND no
     # StructuredOutput tool was already injected (mutually exclusive). The HARD
     # layer (read_summary_budget -> maxOutputTokens) is applied at the call site.
-    # Classify from the assembled prompt text (same text classify_lane_type sees
-    # at the call site, since the call site calls classify_lane_type on this
-    # function's return value).
-    _prompt_so_far = "\n\n".join(parts)
-    _a_lane_type = classify_lane_type(tools, _prompt_so_far)
+    # CLASSIFY FROM THE PER-LANE TASK TEXT (`rest`), NOT the assembled prompt:
+    # the injected directives (F's "For edits… NEVER write/apply…", the structured
+    # instruction, the cache block) all contain edit/read keywords that would
+    # POISON the classifier — making every lane classify as 'edit' and silently
+    # disabling F's per-type cap (measured: F's directive flipped read/review
+    # lanes to 'edit', so the 512/2048 caps never applied). The task text is what
+    # actually determines the lane's intent.
+    _task_text = "\n\n".join(rest)
+    _a_lane_type = classify_lane_type(tools, _task_text)
     read_summary = read_lane_summary_instruction(_a_lane_type, tools)
     if read_summary:
         parts.append(read_summary)
