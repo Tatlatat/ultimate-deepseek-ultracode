@@ -33,6 +33,10 @@ assert_file "$GATEWAY"
 for banned in "ccr-claude-proxy" "run_claude_with_router" "start_ccr_proxy" "generate_ccr_config" "CCR_PROXY_FILE"; do
   grep -q "$banned" "$LAUNCHER" && fail "launcher still references removed CCR symbol: $banned"
 done
+# Slim-down Task 2: the launcher must carry NO Qwen machinery.
+for banned in "ensure_qwen36_ready" "qwen-worker" "qwen36-local" "router-qwen"; do
+  grep -q "$banned" "$LAUNCHER" && fail "launcher still references removed qwen symbol: $banned"
+done
 [[ -f "$ROOT/ccr-claude-proxy.py" ]] && fail "ccr-claude-proxy.py should be deleted"
 
 RX_PROMPT="$ROOT/system-prompt-reasonix.md"
@@ -94,7 +98,6 @@ export CLAUDE_BIN="/bin/echo"
 export REASONIX_BIN="/bin/echo"
 export ANTHROPIC_API_KEY="test-anthropic-key"
 export CLAUDE_REASONIX_GATEWAY_MOCK=1
-export CLAUDE_REASONIX_QWEN_SKIP_START=1
 export CLAUDE_REASONIX_KEEP_ROUTER_RUNTIME=1
 
 # Regression: the Anthropic streaming lazy path must emit heartbeat content_block_delta

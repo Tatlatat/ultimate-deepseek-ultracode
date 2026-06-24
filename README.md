@@ -59,7 +59,6 @@ claude-reasonix workers N    # set default concurrent Reasonix tasks
 claude-reasonix task "..."   # run one Claude task through the fleet, then auto-disable
 claude-reasonix run          # start Claude in Reasonix Fleet mode (default)
 claude-reasonix router       # explicit Claude Code Router native-subagent mode
-claude-reasonix router-qwen  # router mode with local Qwen3.6 as the main model
 claude-reasonix plain        # raw Claude, no fleet
 claude-reasonix doctor       # validate files and local commands
 ```

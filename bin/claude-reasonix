@@ -31,23 +31,14 @@ CLAUDE_CODEX_FLAVOR="reasonix"
 export CLAUDE_REASONIX_FLAVOR CLAUDE_CODEX_FLAVOR
 
 if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
-  : "${CLAUDE_CODEX_CCR_CODEX_MODEL:=${CLAUDE_REASONIX_CCR_MODEL:-claude-reasonix-flash}}"
   : "${CLAUDE_CODEX_SUBAGENT_MODEL:=${CLAUDE_REASONIX_SUBAGENT_MODEL:-claude-reasonix-flash}}"
   : "${ANTHROPIC_CUSTOM_MODEL_OPTION:=claude-reasonix-flash}"
-  # The worker agents (--agents) carry a <CCR-SUBAGENT-MODEL> route tag that decides
-  # where each lane actually goes. Both reasonix and deepseek routes point at
-  # claude-reasonix-flash (the only gateway-served model in reasonix mode).
-  : "${CLAUDE_CODEX_CCR_CODEX_ROUTE:=${CLAUDE_REASONIX_CCR_ROUTE:-reasonix-gateway,claude-reasonix-flash}}"
-  : "${CLAUDE_CODEX_CCR_DEEPSEEK_ROUTE:=${CLAUDE_REASONIX_CCR_DEEPSEEK_ROUTE:-reasonix-gateway,claude-reasonix-flash}}"
-  # All deepseek-* agent types also run on reasonix-flash.
-  : "${CLAUDE_CODEX_CCR_DEEPSEEK_MODEL:=${CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL:-claude-reasonix-flash}}"
   # UltraCode / Dynamic Workflow defaults to NATIVE mode in reasonix flavor: each
   # agent() lane keeps its reasonix-*/deepseek-* agentType (a native Claude Code
-  # subagent type) which CCR routes to claude-reasonix-flash — this is what gives
-  # the parallel phase fan-out (Foundation/CodeReview/Verify) instead of the
-  # serial single-MCP-worker behaviour of "fleet" mode. native_subagents=1 lets
-  # only-reasonix-fleet.py whitelist those native lanes through. Both are required
-  # for fan-out; without them the workflow falls back to one-MCP-lane-at-a-time.
+  # subagent type) which gives the parallel phase fan-out (Foundation/CodeReview/Verify)
+  # instead of the serial single-MCP-worker behaviour of "fleet" mode.
+  # native_subagents=1 lets only-reasonix-fleet.py whitelist those native lanes through.
+  # Both are required for fan-out; without them the workflow falls back to one-MCP-lane-at-a-time.
   : "${CLAUDE_CODEX_WORKFLOW_MODE:=${CLAUDE_REASONIX_WORKFLOW_MODE:-native}}"
   : "${CLAUDE_CODEX_NATIVE_SUBAGENTS:=${CLAUDE_REASONIX_NATIVE_SUBAGENTS:-1}}"
   export CLAUDE_CODEX_SUBAGENT_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION
@@ -98,8 +89,6 @@ Environment overrides:
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=0
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 # experimental native gateway mode
   CLAUDE_REASONIX_ANTHROPIC_API_KEY=... # preferred for router main Anthropic provider
-  CLAUDE_REASONIX_CCR_QWEN_MODEL=qwen36-mlx
-  CLAUDE_REASONIX_QWEN_ANTHROPIC_BASE_URL=http://127.0.0.1:14000/v1/messages
 
 The worker count is dynamic. This launcher starts one Reasonix Fleet MCP server,
 not N static Reasonix servers. Claude can ask that server to run any number of
@@ -363,26 +352,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.bind(("127.0.0.1", 0))
     print(sock.getsockname()[1])
 PY
-}
-
-ensure_qwen36_ready() {
-  case "${CLAUDE_REASONIX_QWEN_SKIP_START:-${CLAUDE_CODEX_QWEN_SKIP_START:-0}}" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-  esac
-
-  local base
-  base="${CLAUDE_REASONIX_QWEN_HEALTH_URL:-${CLAUDE_CODEX_QWEN_HEALTH_URL:-http://127.0.0.1:14000/health}}"
-  if curl -fsS "$base" >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if command -v qwen36 >/dev/null 2>&1; then
-    qwen36 start
-    curl -fsS "$base" >/dev/null 2>&1 && return 0
-  fi
-
-  echo "local Qwen3.6 shim is not ready at $base; run: qwen36 start" >&2
-  exit 1
 }
 
 allowed_tools_csv() {
