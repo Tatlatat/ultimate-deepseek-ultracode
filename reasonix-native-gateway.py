@@ -959,7 +959,7 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
                     }, ensure_ascii=False) + "\n")
             except Exception:
                 pass
-        lane_type = classify_lane_type(payload.get("tools"), prompt)
+        lane_type = classify_lane_type(payload.get("tools"), lane_task_text(messages))
         # Lever F HARD layer (default off): cap output by lane-type budget.
         # Lever A HARD layer (default off): for read lanes, read_summary_budget()
         # returns 512 when READ_SUMMARY is on.  Both levers agree on 512 for read
@@ -1203,6 +1203,24 @@ _EDIT_INTENT_RE = re.compile(
     r"\b(edit|write|create|modify|apply|patch|implement|add|delete|rename|refactor)\b",
     re.IGNORECASE,
 )
+
+
+def lane_task_text(messages: Any) -> str:
+    """The lane's RAW task text — the user/system message content BEFORE the gateway
+    appends any directive (structured-output instruction, F's discipline directive,
+    A's summary instruction, the cache block). Classify on THIS, never on the fully
+    assembled prompt: every injected directive carries edit/read keywords (e.g. the
+    structured instruction says 'Do NOT write sentences like…'), which would flip a
+    read lane to 'edit' and silently disable the per-type output cap. Measured: with
+    the cap keyed off the assembled prompt, 0 read/review lanes were ever classified
+    as read — all 150 became 'edit'."""
+    if not isinstance(messages, list):
+        return ""
+    parts: list[str] = []
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") in {"user", "system"}:
+            parts.append(text_from_content(m.get("content")))
+    return "\n\n".join(p for p in parts if p)
 
 
 def classify_lane_type(tools: Any, prompt_text: str | None) -> str:
@@ -2174,7 +2192,7 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         prompt = openai_messages_to_prompt(normalized, payload.get("tools"))
         register_lane_attempt(prompt)
         record_keepalive_prefix(prompt)
-        lane_type = classify_lane_type(payload.get("tools"), prompt)
+        lane_type = classify_lane_type(payload.get("tools"), lane_task_text(normalized))
         # Lever F HARD layer (default off): cap output by lane-type budget.
         # Lever A HARD layer (default off): for read lanes, read_summary_budget()
         # returns 512 when READ_SUMMARY is on.  Both levers agree on 512 for read
