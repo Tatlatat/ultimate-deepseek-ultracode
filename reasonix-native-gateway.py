@@ -580,6 +580,7 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
             cwd=env_first("CLAUDE_REASONIX_GATEWAY_CWD", "CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd()),
             model=str(config.get("target_model") or ""),
             claude_equiv=usage.get("reasonix_claude_equiv_usd"),
+            lane_type="unknown",  # Task 2 wires real classification
         )
         # Dynamic-Workflow agent({schema}) lanes pass a StructuredOutput tool and
         # expect the subagent to RETURN A tool_use, not prose. reasonix/DeepSeek
@@ -1152,12 +1153,14 @@ def classify_miss(rows: list[JSON]) -> JSON:
 
 
 def append_reasonix_cost(ledger_path: str, usage: JSON, cwd: str = "", model: str = "",
-                         claude_equiv: float | None = None) -> None:
+                         claude_equiv: float | None = None, lane_type: str = "unknown") -> None:
     """Append one per-lane cost record to the session cost ledger (JSONL).
 
     Fail-open: a broken/unwritable ledger path must never break a lane.
     The reasonix CLI's own ~/.reasonix/usage.jsonl has session=null and no cwd,
     so it can't attribute cost to a session/project — this ledger adds cwd + ts.
+    `lane_type` classifies the lane (read/edit/review/workflow/...); the caller
+    passes "unknown" until Task 2 wires real classification.
     """
     try:
         record = {
@@ -1167,6 +1170,7 @@ def append_reasonix_cost(ledger_path: str, usage: JSON, cwd: str = "", model: st
             "cache_pct": usage.get("reasonix_cache_pct"),
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
+            "lane_type": lane_type,
             "cwd": cwd,
             "model": model,
         }
@@ -1568,6 +1572,7 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
             cwd=env_first("CLAUDE_REASONIX_GATEWAY_CWD", "CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd()),
             model=str(config.get("target_model") or ""),
             claude_equiv=usage.get("reasonix_claude_equiv_usd"),
+            lane_type="unknown",  # Task 2 wires real classification
         )
         prompt_tokens = int(usage.get("prompt_tokens") or estimate_tokens(prompt))
         completion_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
