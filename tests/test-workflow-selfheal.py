@@ -133,7 +133,7 @@ def test_healthy_gateway_probe():
 
 def test_gateway_detected_via_base_url_no_port_file():
     """Bug #2: the launcher deletes the .port file, so detection must work from
-    ANTHROPIC_BASE_URL alone (the hook inherits it in router mode)."""
+    ANTHROPIC_BASE_URL alone (the hook inherits it from the gateway env)."""
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
