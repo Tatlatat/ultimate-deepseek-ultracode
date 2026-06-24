@@ -81,7 +81,7 @@ def install_fake_reasonix(registry_model="claude-reasonix-flash", block_secs=0.0
     def fake_registry():
         return {registry_model: {"provider": "reasonix_cli"}}
 
-    def fake_run_reasonix_acp(prompt, config):
+    def fake_run_reasonix_acp(prompt, config, max_output_tokens=None):
         if block_secs:
             time.sleep(block_secs)
         return ("PONG", {

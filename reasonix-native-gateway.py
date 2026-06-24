@@ -568,7 +568,9 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
             except Exception:
                 pass
         lane_type = classify_lane_type(payload.get("tools"), prompt)
-        text, usage = run_reasonix_acp(prompt, config)
+        # Lever F HARD layer (default off): cap output by lane-type budget.
+        text, usage = run_reasonix_acp(
+            prompt, config, max_output_tokens=output_discipline_budget(lane_type))
         gateway_trace("reasonix_acp_response", model=requested_model,
                       cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
         ledger = env_first(
@@ -894,6 +896,74 @@ def context_budget_directive() -> str:
     )
 
 
+def _output_discipline_on() -> bool:
+    """Lever F master switch. DEFAULT OFF (owner Q1: measure-then-promote)."""
+    return os.getenv(
+        "CLAUDE_REASONIX_GATEWAY_OUTPUT_DISCIPLINE",
+        os.getenv("CLAUDE_CODEX_GATEWAY_OUTPUT_DISCIPLINE", "0"),
+    ).lower() in {"1", "true", "yes", "on"}
+
+
+def output_discipline_directive() -> str:
+    """Lever F SOFT layer — the #1-ROI token lever attacks the 42.3% output
+    bucket. Returns "" unless OUTPUT_DISCIPLINE is on (and the _DIRECTIVE
+    sub-flag, default on, isn't disabled). When on, a terse-output block that
+    bans narration and restating the task, and — for edits — demands a minimal
+    diff / SEARCH-REPLACE with NO reprinted unchanged code and NO placeholder
+    comments. Appended LAST in the prompt (correctness-beats-cache placement,
+    same slot the structured/summary instruction uses) so it is the freshest
+    instruction the model sees. The budget (output_discipline_budget) is the
+    HARD layer; this is the soft nudge."""
+    if not _output_discipline_on():
+        return ""
+    if os.getenv(
+        "CLAUDE_REASONIX_GATEWAY_OUTPUT_DISCIPLINE_DIRECTIVE",
+        os.getenv("CLAUDE_CODEX_GATEWAY_OUTPUT_DISCIPLINE_DIRECTIVE", "1"),
+    ).lower() not in {"1", "true", "yes", "on"}:
+        return ""
+    return (
+        "OUTPUT DISCIPLINE (obey exactly):\n"
+        "- Be terse. No narration ('I will now…', 'Let me…', 'Sure, here is…'), "
+        "no restating or summarizing the task, no chain-of-thought prose. Lead "
+        "with the answer.\n"
+        "- For edits: emit a MINIMAL unified diff / SEARCH-REPLACE block ONLY. "
+        "NEVER reprint unchanged code, NEVER write placeholder comments like "
+        "'// rest unchanged' or '# ... existing code ...'. Show only the lines "
+        "that change, with just enough context to apply them."
+    )
+
+
+def output_discipline_budget(lane_type: str) -> int | None:
+    """Lever F HARD layer — the per-lane-type max_output_tokens cap. Returns
+    None when OUTPUT_DISCIPLINE is off (the gateway then passes NO cap, so F is
+    a true no-op by default). When on:
+      read   -> 512  (a read lane returns a one-line summary; it should never
+                      stream a wall of text)
+      edit   -> EDIT budget (default 5900 — the top-20% output proxy the
+                      controller measured; the ledger had too few REAL
+                      edit-format lanes to derive a P95, so this is set
+                      conservatively above the structural minimum and MUST be
+                      re-tuned to ceil(measured-edit-P95 x 1.2) once the harness
+                      emits real diff/SEARCH-REPLACE edit lanes — Step 1 probe
+                      confirmed a too-low cap truncates an edit block mid-
+                      structure, so this floor must stay generous)
+      else   -> 2048 (review/synthesize/unknown — a normal worker answer)
+    All three are env-overridable for per-deployment tuning."""
+    if not _output_discipline_on():
+        return None
+    if lane_type == "read":
+        return env_int(
+            "CLAUDE_REASONIX_GATEWAY_OUTPUT_DISCIPLINE_MAX_TOKENS_READ",
+            "CLAUDE_CODEX_GATEWAY_OUTPUT_DISCIPLINE_MAX_TOKENS_READ", default=512)
+    if lane_type == "edit":
+        return env_int(
+            "CLAUDE_REASONIX_GATEWAY_OUTPUT_DISCIPLINE_MAX_TOKENS_EDIT",
+            "CLAUDE_CODEX_GATEWAY_OUTPUT_DISCIPLINE_MAX_TOKENS_EDIT", default=5900)
+    return env_int(
+        "CLAUDE_REASONIX_GATEWAY_OUTPUT_DISCIPLINE_MAX_TOKENS_DEFAULT",
+        "CLAUDE_CODEX_GATEWAY_OUTPUT_DISCIPLINE_MAX_TOKENS_DEFAULT", default=2048)
+
+
 def _tool_choice_forces(payload: JSON, tool_name: str) -> bool:
     """True when the caller forced this exact tool via tool_choice (Anthropic
     {type:'tool',name} or OpenAI {type:'function',function:{name}}) or via a
@@ -983,6 +1053,14 @@ def openai_messages_to_prompt(messages: list[JSON], tools: Any = None) -> str:
         assembled_len = sum(len(p) for p in parts)
         if is_heavy_synthesis(tools, assembled_len, "\n\n".join(parts)):
             parts.append(mapreduce_directive())
+    # Lever F SOFT layer (default off). Appended LAST — after the task and the
+    # structured/summary instruction — so the terse/diff-only directive is the
+    # freshest instruction the model reads (correctness beats the tiny cache
+    # loss, the same trade-off the structured instruction makes). The HARD layer
+    # (output_discipline_budget -> maxOutputTokens) is applied at the call site.
+    discipline = output_discipline_directive()
+    if discipline:
+        parts.append(discipline)
     return "\n\n".join(parts).strip() or "Complete the requested Reasonix worker task."
 
 
@@ -1590,7 +1668,9 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         register_lane_attempt(prompt)
         record_keepalive_prefix(prompt)
         lane_type = classify_lane_type(payload.get("tools"), prompt)
-        text, usage = run_reasonix_acp(prompt, config)
+        # Lever F HARD layer (default off): cap output by lane-type budget.
+        text, usage = run_reasonix_acp(
+            prompt, config, max_output_tokens=output_discipline_budget(lane_type))
         gateway_trace("reasonix_acp_openai_response", model=requested_model,
                       cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
         ledger = env_first(
