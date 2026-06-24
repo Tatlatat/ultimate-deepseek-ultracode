@@ -59,17 +59,17 @@ def main() -> int:
     if native_subagents_enabled() and payload_mentions_native_agent(payload):
         return 0
 
-    # Block the native Agent tool in BOTH flavors and push to the codex_fleet MCP.
+    # Block the native Agent tool in BOTH flavors and push to the reasonix_fleet MCP.
     # The MCP is now flavor-aware: in a reasonix session it runs reasonix acp (not
     # codex exec), so the subagent runs on Reasonix. We must NOT let the native
     # Agent tool through — it goes through the harness dispatch/classifier which
     # hangs (0 tokens). The MCP is the working escape hatch for both engines.
     shown = tool_name or "<unknown>"
-    worker = "run_codex_worker" if flavor() != "reasonix" else "run_codex_worker (runs Reasonix in this session)"
+    worker = "run_reasonix_worker" if flavor() != "reasonix" else "run_reasonix_worker (runs Reasonix in this session)"
     print(
         "Codex Fleet subagent policy blocked Claude native subagent tool "
-        f"{shown}. Use mcp__codex_fleet__{worker} or "
-        "mcp__codex_fleet__run_codex_fleet instead.",
+        f"{shown}. Use mcp__reasonix_fleet__{worker} or "
+        "mcp__reasonix_fleet__run_reasonix_fleet instead.",
         file=sys.stderr,
     )
     return 2

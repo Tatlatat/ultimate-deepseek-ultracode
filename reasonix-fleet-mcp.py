@@ -24,15 +24,15 @@ def env_int(name: str, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-DEFAULT_CONCURRENCY = env_int("CODEX_FLEET_DEFAULT_CONCURRENCY", 16)
-DEFAULT_TIMEOUT = env_int("CODEX_FLEET_TIMEOUT_SECONDS", 1800)
-DEFAULT_MAX_OUTPUT = env_int("CODEX_FLEET_MAX_OUTPUT_CHARS", 8000)
+DEFAULT_CONCURRENCY = env_int("REASONIX_FLEET_DEFAULT_CONCURRENCY", 16)
+DEFAULT_TIMEOUT = env_int("REASONIX_FLEET_TIMEOUT_SECONDS", 1800)
+DEFAULT_MAX_OUTPUT = env_int("REASONIX_FLEET_MAX_OUTPUT_CHARS", 8000)
 CODEX_BIN = os.getenv("CODEX_BIN", "codex")
-LOG_DIR = Path(os.getenv("CODEX_FLEET_LOG_DIR", "/Users/tatlatat/.claude/codex-fleet/runtime/logs"))
+LOG_DIR = Path(os.getenv("REASONIX_FLEET_LOG_DIR", "/Users/tatlatat/.claude/codex-fleet/runtime/logs"))
 
 
 def fleet_flavor() -> str:
-    return os.getenv("CLAUDE_REASONIX_FLAVOR", os.getenv("CLAUDE_CODEX_FLAVOR", "codex")).strip().lower()
+    return os.getenv("CLAUDE_REASONIX_FLAVOR", os.getenv("CLAUDE_CODEX_FLAVOR", "reasonix")).strip().lower()
 
 
 _RX_GATEWAY = None
@@ -104,7 +104,7 @@ async def run_one_task(task: dict[str, Any], index: int, batch_id: str, max_outp
     config = {"reasonix_bin": os.getenv("REASONIX_BIN", "reasonix"),
               "target_model": model}
     # run_reasonix_acp reads cwd from CLAUDE_CODEX_GATEWAY_CODEX_CWD.
-    prev_cwd = os.environ.get("CLAUDE_REASONIX_GATEWAY_CODEX_CWD", os.environ.get("CLAUDE_REASONIX_GATEWAY_CODEX_CWD"))
+    prev_cwd = os.environ.get("CLAUDE_REASONIX_GATEWAY_CODEX_CWD", os.environ.get("CLAUDE_CODEX_GATEWAY_CODEX_CWD"))
     os.environ["CLAUDE_REASONIX_GATEWAY_CODEX_CWD"] = cwd_text
     try:
         loop = asyncio.get_running_loop()
@@ -214,12 +214,12 @@ def tool_definitions() -> list[dict[str, Any]]:
     }
     return [
         {
-            "name": "run_codex_worker",
+            "name": "run_reasonix_worker",
             "description": "Run one Reasonix subagent (reasonix acp). The Reasonix process exits when the task is complete.",
             "inputSchema": task_schema,
         },
         {
-            "name": "run_codex_fleet",
+            "name": "run_reasonix_fleet",
             "description": "Run any number of Codex CLI subagent tasks through a dynamic queue. Use this for dynamic workflows and large batches.",
             "inputSchema": {
                 "type": "object",
@@ -242,9 +242,9 @@ def tool_definitions() -> list[dict[str, Any]]:
 
 
 async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    if name == "run_codex_fleet":
+    if name == "run_reasonix_fleet":
         payload = await run_fleet(arguments)
-    elif name == "run_codex_worker":
+    elif name == "run_reasonix_worker":
         payload = await run_worker(arguments)
     elif name == "fleet_status":
         payload = {
@@ -253,12 +253,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             "default_timeout_seconds": DEFAULT_TIMEOUT,
             "default_max_output_chars": DEFAULT_MAX_OUTPUT,
             "log_dir": str(LOG_DIR),
-            "model": os.getenv("CODEX_FLEET_MODEL", "gpt-5.4"),
-            "reasoning_effort": os.getenv("CODEX_FLEET_REASONING", "xhigh"),
-            "service_tier": os.getenv("CODEX_FLEET_SERVICE_TIER", "fast"),
-            "web_search": os.getenv("CODEX_FLEET_WEB_SEARCH", "live"),
-            "sandbox": os.getenv("CODEX_FLEET_SANDBOX", "workspace-write"),
-            "approval_policy": os.getenv("CODEX_FLEET_APPROVAL", "never"),
+            "model": os.getenv("REASONIX_FLEET_MODEL", "gpt-5.4"),
+            "reasoning_effort": os.getenv("REASONIX_FLEET_REASONING", "xhigh"),
+            "service_tier": os.getenv("REASONIX_FLEET_SERVICE_TIER", "fast"),
+            "web_search": os.getenv("REASONIX_FLEET_WEB_SEARCH", "live"),
+            "sandbox": os.getenv("REASONIX_FLEET_SANDBOX", "workspace-write"),
+            "approval_policy": os.getenv("REASONIX_FLEET_APPROVAL", "never"),
         }
     else:
         raise ValueError(f"unknown tool: {name}")

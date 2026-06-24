@@ -332,7 +332,7 @@ const __codexWorkflowAgent = async (prompt, opts = {}) => {
     [
       'You are a thin Claude Code Workflow adapter for claude-codex.',
       'Do not solve the task yourself.',
-      'Call mcp__codex_fleet__run_codex_worker exactly once with the Codex task below, wait for completion, then return the Codex result.',
+      'Call mcp__reasonix_fleet__run_reasonix_worker exactly once with the Codex task below, wait for completion, then return the Codex result.',
       'If a schema is attached to this adapter call, shape the final answer to that schema using only facts returned by Codex.',
       'Codex task title: ' + label,
       'Codex task prompt:\n' + codexPrompt,

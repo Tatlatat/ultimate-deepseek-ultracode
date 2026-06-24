@@ -2,7 +2,7 @@
 """The codex-fleet MCP must run REASONIX (not codex) when CLAUDE_CODEX_FLAVOR=reasonix.
 
 Root cause this guards: in a claude-reasonix session, single subagents are pushed
-to the codex_fleet MCP by only-codex-fleet.py, but the MCP ran `codex exec` = Codex,
+to the reasonix_fleet MCP by only-codex-fleet.py, but the MCP ran `codex exec` = Codex,
 so "every agent is reasonix" was false. The MCP must dispatch through reasonix acp
 when the session flavor is reasonix.
 
@@ -21,7 +21,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-spec = importlib.util.spec_from_file_location("codex_fleet_mcp", ROOT / "reasonix-fleet-mcp.py")
+spec = importlib.util.spec_from_file_location("reasonix_fleet_mcp", ROOT / "reasonix-fleet-mcp.py")
 mcp = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 

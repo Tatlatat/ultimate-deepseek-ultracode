@@ -218,27 +218,27 @@ codex_bin = sys.argv[3]
 mcp_server = sys.argv[4]
 runtime_dir = sys.argv[5]
 
-model = os.getenv("CODEX_FLEET_MODEL", "gpt-5.4")
-reasoning = os.getenv("CODEX_FLEET_REASONING", "xhigh")
-service_tier = os.getenv("CODEX_FLEET_SERVICE_TIER", "fast")
-web_search = os.getenv("CODEX_FLEET_WEB_SEARCH", "live")
-sandbox = os.getenv("CODEX_FLEET_SANDBOX", "workspace-write")
-approval = os.getenv("CODEX_FLEET_APPROVAL", "never")
+model = os.getenv("REASONIX_FLEET_MODEL", "gpt-5.4")
+reasoning = os.getenv("REASONIX_FLEET_REASONING", "xhigh")
+service_tier = os.getenv("REASONIX_FLEET_SERVICE_TIER", "fast")
+web_search = os.getenv("REASONIX_FLEET_WEB_SEARCH", "live")
+sandbox = os.getenv("REASONIX_FLEET_SANDBOX", "workspace-write")
+approval = os.getenv("REASONIX_FLEET_APPROVAL", "never")
 
 servers = {
-    "codex_fleet": {
+    "reasonix_fleet": {
         "command": "/usr/bin/env",
         "args": ["python3", mcp_server],
         "env": {
             "CODEX_BIN": codex_bin,
-            "CODEX_FLEET_DEFAULT_CONCURRENCY": str(default_concurrency),
-            "CODEX_FLEET_MODEL": model,
-            "CODEX_FLEET_REASONING": reasoning,
-            "CODEX_FLEET_SERVICE_TIER": service_tier,
-            "CODEX_FLEET_WEB_SEARCH": web_search,
-            "CODEX_FLEET_SANDBOX": sandbox,
-            "CODEX_FLEET_APPROVAL": approval,
-            "CODEX_FLEET_LOG_DIR": os.path.join(runtime_dir, "logs"),
+            "REASONIX_FLEET_DEFAULT_CONCURRENCY": str(default_concurrency),
+            "REASONIX_FLEET_MODEL": model,
+            "REASONIX_FLEET_REASONING": reasoning,
+            "REASONIX_FLEET_SERVICE_TIER": service_tier,
+            "REASONIX_FLEET_WEB_SEARCH": web_search,
+            "REASONIX_FLEET_SANDBOX": sandbox,
+            "REASONIX_FLEET_APPROVAL": approval,
+            "REASONIX_FLEET_LOG_DIR": os.path.join(runtime_dir, "logs"),
             # Flavor + reasonix wiring so the MCP worker runs Reasonix (not codex)
             # in a claude-reasonix session. REASONIX_BIN must be absolute (the MCP
             # is spawned with a stripped PATH that lacks the fnm shim dir).
@@ -839,13 +839,13 @@ stop_ccr_proxy() {
 }
 
 allowed_tools_csv() {
-  printf '%s\n' "mcp__codex_fleet__*"
+  printf '%s\n' "mcp__reasonix_fleet__*"
 }
 
 bridge_prompt() {
   local workers
   workers="$(current_workers)"
-  printf 'This Claude Code session is running Codex Fleet dynamic mode. Use the codex_fleet MCP server to dispatch any number of Codex CLI subagents. Default concurrent Codex tasks: %s.\n\n' "$workers"
+  printf 'This Claude Code session is running Codex Fleet dynamic mode. Use the reasonix_fleet MCP server to dispatch any number of Codex CLI subagents. Default concurrent Codex tasks: %s.\n\n' "$workers"
   cat "$PROMPT_FILE"
 }
 
@@ -1070,7 +1070,7 @@ process_list() {
 }
 
 report_active_sessions() {
-  python3 - "$MCP_FILE" "${CLAUDE_REASONIX_CODEX_MODEL:-${CLAUDE_CODEX_CODEX_MODEL:-${CODEX_FLEET_MODEL:-gpt-5.4}}}" "$(current_workers)" "${CLAUDE_REASONIX_PS_FIXTURE:-${CLAUDE_CODEX_PS_FIXTURE:-}}" <<'PY'
+  python3 - "$MCP_FILE" "${CLAUDE_REASONIX_CODEX_MODEL:-${CLAUDE_CODEX_CODEX_MODEL:-${REASONIX_FLEET_MODEL:-gpt-5.4}}}" "$(current_workers)" "${CLAUDE_REASONIX_PS_FIXTURE:-${CLAUDE_CODEX_PS_FIXTURE:-}}" <<'PY'
 import re
 import subprocess
 import sys

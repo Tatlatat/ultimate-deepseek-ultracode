@@ -1288,7 +1288,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     model = str(config.get("target_model") or "deepseek-v4-flash")
     effort = env_first("CLAUDE_REASONIX_REASONIX_EFFORT", "CLAUDE_CODEX_REASONIX_EFFORT", default="high")
     budget = env_first("CLAUDE_REASONIX_REASONIX_BUDGET", "CLAUDE_CODEX_REASONIX_BUDGET", default="0.05")
-    timeout = float(env_first("CLAUDE_REASONIX_GATEWAY_CODEX_TIMEOUT", "CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "CODEX_FLEET_TIMEOUT_SECONDS", default="600"))
+    timeout = float(env_first("CLAUDE_REASONIX_GATEWAY_CODEX_TIMEOUT", "CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "REASONIX_FLEET_TIMEOUT_SECONDS", default="600"))
     cwd = env_first("CLAUDE_REASONIX_GATEWAY_CODEX_CWD", "CLAUDE_REASONIX_GATEWAY_CODEX_CWD", default=os.getcwd())
     max_attempts = max(1, env_int("CLAUDE_REASONIX_GATEWAY_CODEX_MAX_ATTEMPTS", "CLAUDE_CODEX_GATEWAY_CODEX_MAX_ATTEMPTS", default=3))
     semaphore = codex_cli_semaphore()

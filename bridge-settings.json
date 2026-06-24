@@ -4,9 +4,9 @@
   "workflowKeywordTriggerEnabled": true,
   "permissions": {
     "allow": [
-      "mcp__codex_fleet__run_codex_worker",
-      "mcp__codex_fleet__run_codex_fleet",
-      "mcp__codex_fleet__fleet_status"
+      "mcp__reasonix_fleet__run_reasonix_worker",
+      "mcp__reasonix_fleet__run_reasonix_fleet",
+      "mcp__reasonix_fleet__fleet_status"
     ]
   },
   "hooks": {

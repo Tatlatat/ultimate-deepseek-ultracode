@@ -71,9 +71,9 @@ if not any(workflow_hook in command for command in commands):
 
 permissions = settings.get("permissions", {}).get("allow", [])
 required = {
-    "mcp__codex_fleet__run_codex_worker",
-    "mcp__codex_fleet__run_codex_fleet",
-    "mcp__codex_fleet__fleet_status",
+    "mcp__reasonix_fleet__run_reasonix_worker",
+    "mcp__reasonix_fleet__run_reasonix_fleet",
+    "mcp__reasonix_fleet__fleet_status",
 }
 if not required.issubset(set(permissions)):
     raise SystemExit(f"bridge settings must allow Codex Fleet MCP tools: {permissions}")
@@ -208,12 +208,12 @@ import sys
 
 gateway_path = sys.argv[1]
 os.environ.pop("CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", None)
-os.environ.pop("CODEX_FLEET_TIMEOUT_SECONDS", None)
+os.environ.pop("REASONIX_FLEET_TIMEOUT_SECONDS", None)
 spec = importlib.util.spec_from_file_location("codex_native_gateway_timeout_default", gateway_path)
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
-default = module.env_first("CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "CODEX_FLEET_TIMEOUT_SECONDS", default="600")
+default = module.env_first("CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "REASONIX_FLEET_TIMEOUT_SECONDS", default="600")
 if float(default) < 600:
     raise SystemExit(f"codex timeout default must be >= 600s, got {default}")
 PY
@@ -301,7 +301,7 @@ if grep -q -- " --agents {" <<<"$bare_output"; then
   fail "safe claude-codex should not define gateway native subagents by default"
 fi
 if grep -q -- "--allowedTools" <<<"$bare_output"; then
-  fail "bare claude-codex should not allow-list only codex_fleet"
+  fail "bare claude-codex should not allow-list only reasonix_fleet"
 fi
 if grep -q -- "--tools " <<<"$bare_output"; then
   fail "bare claude-codex should not disable Claude native tools"
@@ -343,26 +343,26 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as fh:
     data = json.load(fh)
 servers = data.get("mcpServers", {})
-expected = {"codex_fleet"}
+expected = {"reasonix_fleet"}
 if set(servers) != expected:
     raise SystemExit(f"unexpected servers: {sorted(servers)}")
-config = servers["codex_fleet"]
+config = servers["reasonix_fleet"]
 if config.get("command") != "/usr/bin/env":
-    raise SystemExit("codex_fleet should start through /usr/bin/env")
+    raise SystemExit("reasonix_fleet should start through /usr/bin/env")
 args = config.get("args", [])
 if "python3" not in args or not any(arg.endswith("reasonix-fleet-mcp.py") for arg in args):
-    raise SystemExit(f"unexpected codex_fleet args: {args}")
+    raise SystemExit(f"unexpected reasonix_fleet args: {args}")
 env = config.get("env", {})
-expected_model = os.environ.get("CODEX_FLEET_MODEL", "gpt-5.4")
+expected_model = os.environ.get("REASONIX_FLEET_MODEL", "gpt-5.4")
 if env.get("CODEX_BIN") != "/bin/echo":
     raise SystemExit(f"CODEX_BIN was not forwarded: {env}")
-if env.get("CODEX_FLEET_DEFAULT_CONCURRENCY") != "3":
+if env.get("REASONIX_FLEET_DEFAULT_CONCURRENCY") != "3":
     raise SystemExit(f"default concurrency was not forwarded: {env}")
-if env.get("CODEX_FLEET_MODEL") != expected_model:
+if env.get("REASONIX_FLEET_MODEL") != expected_model:
     raise SystemExit(f"model env was not {expected_model}: {env}")
-if env.get("CODEX_FLEET_REASONING") != "xhigh":
+if env.get("REASONIX_FLEET_REASONING") != "xhigh":
     raise SystemExit(f"reasoning default was not xhigh: {env}")
-if env.get("CODEX_FLEET_SERVICE_TIER") != "fast":
+if env.get("REASONIX_FLEET_SERVICE_TIER") != "fast":
     raise SystemExit(f"service tier default was not fast: {env}")
 PY
 
@@ -373,7 +373,7 @@ if grep -q -- " --agents {" <<<"$run_output"; then
   fail "safe run should not pass gateway native subagent definitions by default"
 fi
 if grep -q -- "--allowedTools" <<<"$run_output"; then
-  fail "run should not allow-list only codex_fleet"
+  fail "run should not allow-list only reasonix_fleet"
 fi
 if grep -q -- "--tools " <<<"$run_output"; then
   fail "run should not disable Claude native tools"
@@ -538,8 +538,8 @@ grep -q "one shot prompt" <<<"$task_output" || fail "task should forward prompt"
 after_task_status="$("$LAUNCHER" status)"
 grep -q "disabled" <<<"$after_task_status" || fail "task should auto-disable fleet mode after finishing"
 
-printf '{"tool_name":"mcp__codex_fleet__run_codex_fleet"}' | python3 "$HOOK"
-printf '{"tool_name":"mcp__codex_2__codex"}' | python3 "$HOOK"
+printf '{"tool_name":"mcp__reasonix_fleet__run_reasonix_fleet"}' | python3 "$HOOK"
+printf '{"tool_name":"mcp__some_other__tool"}' | python3 "$HOOK"
 printf '{"tool_name":"Bash"}' | python3 "$HOOK"
 printf '{"tool_name":"Workflow"}' | python3 "$HOOK"
 printf '{"tool_name":"Read"}' | python3 "$HOOK"
@@ -599,7 +599,7 @@ if "__codexWorkflowAgent" not in script:
     raise SystemExit("Workflow hook did not inject native Codex wrapper")
 if "await __codexWorkflowAgent('inspect security'" not in script:
     raise SystemExit("Workflow hook did not rewrite agent calls")
-if "mcp__codex_fleet__run_codex_worker" in script:
+if "mcp__reasonix_fleet__run_reasonix_worker" in script:
     raise SystemExit("native Workflow hook should not route through Codex Fleet MCP")
 if "reasonix-security" not in script:
     raise SystemExit("native Workflow hook should include a Reasonix security agent mapping")
@@ -637,7 +637,7 @@ if "__codexWorkflowAgent" not in script:
     raise SystemExit("router Workflow hook did not inject Codex wrapper")
 if "reasonix-security" not in script:
     raise SystemExit("router Workflow hook should route security lanes to reasonix-security")
-if "mcp__codex_fleet__run_codex_worker" in script:
+if "mcp__reasonix_fleet__run_reasonix_worker" in script:
     raise SystemExit("router Workflow hook should not route through Codex Fleet MCP")
 context = out["hookSpecificOutput"].get("additionalContext", "")
 if "Claude Code Router" not in context or "native Claude Code subagents" not in context:
@@ -666,7 +666,7 @@ proc = subprocess.run(
 )
 out = json.loads(proc.stdout)
 script = out["hookSpecificOutput"]["updatedInput"]["script"]
-if "mcp__codex_fleet__run_codex_worker" not in script:
+if "mcp__reasonix_fleet__run_reasonix_worker" not in script:
     raise SystemExit("legacy fleet Workflow hook should still route through Codex Fleet MCP")
 PY
 
@@ -974,8 +974,8 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as fh:
     data = json.load(fh)
-server = data["mcpServers"]["codex_fleet"]
-if server["env"].get("CODEX_FLEET_DEFAULT_CONCURRENCY") != "200":
+server = data["mcpServers"]["reasonix_fleet"]
+if server["env"].get("REASONIX_FLEET_DEFAULT_CONCURRENCY") != "200":
     raise SystemExit("workers 200 should set default concurrency to 200")
 PY
 
@@ -1017,7 +1017,7 @@ fi
 python3 "$ROOT/tests/test-reasonix-cost-ledger.py" || fail "reasonix cost ledger regression"
 
 # Hook flavor-awareness: reasonix flavor must NOT block the native Agent tool
-# (so subagents route to reasonix, not the codex_fleet MCP); codex flavor still blocks.
+# (so subagents route to reasonix, not the reasonix_fleet MCP); codex flavor still blocks.
 echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_CODEX_FLAVOR=reasonix python3 "$ROOT/hooks/only-reasonix-fleet.py" >/dev/null 2>&1 && fail "reasonix flavor must STILL block Agent (push to reasonix MCP, not native which hangs)"
 echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_CODEX_FLAVOR=codex CLAUDE_CODEX_NATIVE_SUBAGENTS=0 python3 "$ROOT/hooks/only-reasonix-fleet.py" >/dev/null 2>&1 && fail "codex flavor must still block the Agent tool"
 echo "PASS: only-codex-fleet flavor-aware"

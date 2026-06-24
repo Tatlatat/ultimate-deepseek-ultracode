@@ -74,8 +74,8 @@ native `Task`/`Agent`/`Explore`/`general-purpose` tools first — they are block
 by the Codex Fleet policy hook and waste a round-trip (you'll see a lane finish
 with "0 tool uses" then a block message). Skip that. The correct tools:
 
-- **One subagent:** `mcp__codex_fleet__run_codex_worker` with the task prompt.
-- **Several in parallel:** `mcp__codex_fleet__run_codex_fleet` with the task list.
+- **One subagent:** `mcp__reasonix_fleet__run_reasonix_worker` with the task prompt.
+- **Several in parallel:** `mcp__reasonix_fleet__run_reasonix_fleet` with the task list.
 
 Both run on Reasonix (DeepSeek) in this session and write real files. Treat them
 as your native subagent primitive — when the Agent-first policy above says
