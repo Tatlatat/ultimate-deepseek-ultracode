@@ -98,12 +98,25 @@ def patch_file(path: str) -> str:
         return "already"
     if STOCK not in text:
         return "nomatch"
-    text = text.replace(STOCK, PATCHED)
+    _write_atomic(path, text.replace(STOCK, PATCHED))
+    return "patched"
+
+
+def revert_file(path: str) -> str:
+    """Undo the patch: 'reverted' | 'notpatched' for one acp file."""
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    if PATCHED not in text:
+        return "notpatched"
+    _write_atomic(path, text.replace(PATCHED, STOCK))
+    return "reverted"
+
+
+def _write_atomic(path: str, text: str) -> None:
     tmp = path + ".tmp-ephemeral"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(text)
-    os.replace(tmp, path)  # atomic
-    return "patched"
+    os.replace(tmp, path)
 
 
 def main() -> int:
@@ -121,6 +134,13 @@ def main() -> int:
     if not acp_files:
         print(f"apply_ephemeral: no dist/cli/acp-*.js under {root}", file=sys.stderr)
         return 2
+
+    if "--revert" in sys.argv[1:]:
+        for f in acp_files:
+            r = revert_file(f)
+            print(f"apply_ephemeral: {r} {f}")
+        return 0
+
     results = {f: patch_file(f) for f in acp_files}
     patched = [f for f, r in results.items() if r == "patched"]
     already = [f for f, r in results.items() if r == "already"]
