@@ -33,7 +33,7 @@ def test_records_prefix_head_for_keepalive():
 def test_keepalive_targets_are_recent_only():
     # The keep-alive should ping only families seen within the freshness window, so we
     # don't waste pings re-warming prefixes the user has moved on from.
-    os.environ["CLAUDE_CODEX_GATEWAY_KEEPALIVE_WINDOW_SECONDS"] = "60"
+    os.environ["CLAUDE_REASONIX_GATEWAY_KEEPALIVE_WINDOW_SECONDS"] = "60"
     gw._KEEPALIVE_PREFIXES.clear()
     fresh = "FRESH PREFIX " + ("a" * 9000) + "\nq1"
     stale = "STALE PREFIX " + ("b" * 9000) + "\nq2"
@@ -48,29 +48,29 @@ def test_keepalive_targets_are_recent_only():
     keys = {t[0] for t in targets}
     expect(fkey in keys, "fresh family is a keep-alive target")
     expect(skey not in keys, "stale family (past the window) is NOT a target")
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_KEEPALIVE_WINDOW_SECONDS", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_KEEPALIVE_WINDOW_SECONDS", None)
 
 
 def test_keepalive_disabled_records_nothing():
-    os.environ["CLAUDE_CODEX_GATEWAY_KEEPALIVE"] = "0"
+    os.environ["CLAUDE_REASONIX_GATEWAY_KEEPALIVE"] = "0"
     gw._KEEPALIVE_PREFIXES.clear()
     try:
         gw.record_keepalive_prefix("ANYTHING " + ("z" * 9000))
         expect(len(gw._KEEPALIVE_PREFIXES) == 0, "kill-switch: no prefixes recorded")
     finally:
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_KEEPALIVE", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_KEEPALIVE", None)
 
 
 def test_keepalive_dict_is_bounded():
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_KEEPALIVE", None)
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_DICT_CAP"] = "32"
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_KEEPALIVE", None)
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_DICT_CAP"] = "32"
     gw._KEEPALIVE_PREFIXES.clear()
     try:
         for i in range(200):
             gw.record_keepalive_prefix(f"DISTINCT {i} " + ("q" * 9000))
         expect(len(gw._KEEPALIVE_PREFIXES) <= 32, f"keepalive dict bounded; got {len(gw._KEEPALIVE_PREFIXES)}")
     finally:
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_DICT_CAP", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_PRIME_DICT_CAP", None)
         gw._KEEPALIVE_PREFIXES.clear()
 
 

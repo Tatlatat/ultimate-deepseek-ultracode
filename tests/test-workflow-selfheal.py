@@ -3,7 +3,7 @@
 
 Covers the gateway-reachability probe, the reasonix-CLI check, fail-open
 behaviour, and that the JS wrapper honours the __claudeReasonixForceReasonixOnly
-sentinel. The codex-remap / DEEPSEEK_API_KEY probe has been removed.
+sentinel. The reasonix-remap / DEEPSEEK_API_KEY probe has been removed.
 """
 from __future__ import annotations
 
@@ -40,11 +40,11 @@ const b = await agent('deep db work', {label:'database deep'})
 
 def _clear_deepseek_env():
     os.environ.pop("DEEPSEEK_API_KEY", None)
-    os.environ.pop("CLAUDE_CODEX_DEEPSEEK_API_KEY", None)
+    os.environ.pop("CLAUDE_REASONIX_DEEPSEEK_API_KEY", None)
 
 
-def test_no_codex_remap_no_key():
-    """The codex-remap path has been removed: no DEEPSEEK_API_KEY must NOT trigger
+def test_no_reasonix_remap_no_key():
+    """The reasonix-remap path has been removed: no DEEPSEEK_API_KEY must NOT trigger
     any script mutation or remap action — deepseek lanes pass through unchanged."""
     _clear_deepseek_env()
     new, ctx, rep = sh.preflight(SCRIPT, "router")
@@ -52,11 +52,11 @@ def test_no_codex_remap_no_key():
     expect("deepseek_key" not in rep["checks"],
            f"deepseek_key check should be gone; got: {list(rep['checks'].keys())}")
     # No remap action emitted.
-    expect(not any(a.get("action") == "remap_deepseek_to_codex" for a in rep["actions"]),
-           "remap_deepseek_to_codex action must not appear after codex remap removal")
+    expect(not any(a.get("action") == "remap_deepseek_to_reasonix" for a in rep["actions"]),
+           "remap_deepseek_to_reasonix action must not appear after reasonix remap removal")
     # Sentinel NOT injected — script is returned verbatim.
     expect("__claudeReasonixForceReasonixOnly" not in new,
-           "sentinel must not be injected when codex remap is absent")
+           "sentinel must not be injected when reasonix remap is absent")
     # Deepseek lane literal survives intact.
     expect("agentType:'deepseek-architecture'" in new or "agentType: 'deepseek-architecture'" in new,
            "deepseek-architecture lane must be passed through unmodified")
@@ -64,7 +64,7 @@ def test_no_codex_remap_no_key():
 
 def test_script_unchanged_no_sentinel():
     """Preflight must return the script byte-for-byte unchanged (no sentinel,
-    no surgery) because the codex-remap logic no longer exists."""
+    no surgery) because the reasonix-remap logic no longer exists."""
     _clear_deepseek_env()
     new, _ctx, _rep = sh.preflight(SCRIPT, "router")
     expect(new == SCRIPT, f"script must be returned unchanged; diff:\n{new!r}\nvs\n{SCRIPT!r}")
@@ -78,7 +78,7 @@ def test_script_unchanged_no_sentinel():
 
 def test_script_passthrough_with_key_present():
     """With DEEPSEEK_API_KEY set, script also passes through unchanged — no deepseek_key
-    check in report and no remap action (codex remap removed entirely)."""
+    check in report and no remap action (reasonix remap removed entirely)."""
     os.environ["DEEPSEEK_API_KEY"] = "sk-test"
     try:
         new, ctx, rep = sh.preflight(SCRIPT, "router")
@@ -177,12 +177,12 @@ def test_fail_open_on_bad_input():
     expect(isinstance(rep, dict), "report must be a dict")
     expect("error" not in rep, f"None script must not error in report: {rep.get('error')}")
     expect(new is None, "None script should be returned unchanged")
-    expect(not any(a.get("action") == "remap_deepseek_to_codex" for a in rep.get("actions", [])),
+    expect(not any(a.get("action") == "remap_deepseek_to_reasonix" for a in rep.get("actions", [])),
            "must not claim a deepseek remap on a None script")
 
 
 def test_wrapper_honours_sentinel():
-    """The native wrapper JS must route deepseek hints to codex when the
+    """The native wrapper JS must route deepseek hints to reasonix when the
     sentinel is set. Execute the function under node if available; else skip."""
     node = None
     for cand in ("node", "bun"):
@@ -210,8 +210,8 @@ console.log(JSON.stringify({off, on}));
 
 def test_wrapper_emits_reasonix_agenttype_names():
     """The wrapper must emit the reasonix-* agentType names that --agents defines
-    and only-reasonix-fleet.py whitelists — never the dropped codex-*/deepseek-*
-    names. These three sites (wrapper emit, --agents definitions, hook whitelist)
+    and only-reasonix-fleet.py whitelists — never dropped legacy names.
+    These three sites (wrapper emit, --agents definitions, hook whitelist)
     must stay byte-identical; emitting a name no site defines hook-blocks the lane."""
     os.environ["CLAUDE_REASONIX_FLAVOR"] = "reasonix"
     try:
@@ -227,22 +227,22 @@ def test_wrapper_emits_reasonix_agenttype_names():
 
 
 def test_wrapper_emit_is_flavor_agnostic():
-    """The emit logic no longer branches on flavor (codex flavor was removed); an
-    unset flavor must still produce reasonix-* names, never the legacy codex-worker."""
+    """The emit logic no longer branches on flavor (reasonix flavor is the only one); an
+    unset flavor must still produce reasonix-* names, never the legacy worker name."""
     os.environ.pop("CLAUDE_REASONIX_FLAVOR", None)
-    os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+    os.environ.pop("CLAUDE_REASONIX_FLAVOR", None)
     src = cw.wrapper_source_native()
     expect("reasonix-worker" in src,
            f"unset flavor must still produce reasonix-worker; got: {src[:300]}")
 
 
 def test_reasonix_cli_check_in_reasonix_flavor():
-    """preflight() must populate checks['reasonix_cli'] when CLAUDE_CODEX_FLAVOR=reasonix.
+    """preflight() must populate checks['reasonix_cli'] when CLAUDE_REASONIX_FLAVOR=reasonix.
 
     Part 1: binary absent  -> present is False, ctx contains a reasonix self-heal note.
     Part 2: binary present -> present is True.
     """
-    os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
+    os.environ["CLAUDE_REASONIX_FLAVOR"] = "reasonix"
     os.environ["REASONIX_BIN"] = "/nonexistent/reasonix-xyz"
     try:
         _, ctx, rep = sh.preflight(SCRIPT, "router")
@@ -259,12 +259,12 @@ def test_reasonix_cli_check_in_reasonix_flavor():
         expect(rep2["checks"]["reasonix_cli"]["present"] is True,
                f"expected present=True for 'sh' binary, got: {rep2['checks']['reasonix_cli']}")
     finally:
-        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+        os.environ.pop("CLAUDE_REASONIX_FLAVOR", None)
         os.environ.pop("REASONIX_BIN", None)
 
 
 def main() -> int:
-    test_no_codex_remap_no_key()
+    test_no_reasonix_remap_no_key()
     test_script_unchanged_no_sentinel()
     test_script_passthrough_with_key_present()
     test_gateway_down_reported()

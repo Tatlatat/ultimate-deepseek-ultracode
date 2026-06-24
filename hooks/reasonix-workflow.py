@@ -259,13 +259,13 @@ def workflow_mode() -> str:
 def wrapper_source_native() -> str:
     flavor = os.getenv("CLAUDE_REASONIX_FLAVOR", os.getenv("CLAUDE_CODEX_FLAVOR", "reasonix"))
     return r"""
-// Injected by claude-codex: real Claude Code Workflow remains active, and
-// each workflow worker lane is routed to a native Codex/DeepSeek subagent type.
+// Injected by claude-reasonix: real Claude Code Workflow remains active, and
+// each workflow worker lane is routed to a native Reasonix/DeepSeek subagent type.
 const __claudeReasonixFlavor = '""" + flavor + r"""'
 const __claudeReasonixNativeAgentType = (opts = {}) => {
   const explicit = String(opts.agentType || '')
   // Self-heal override: when DEEPSEEK_API_KEY is absent the preflight sets this
-  // flag so every lane (including deepseek-routed hints) runs via codex-cli,
+  // flag so every lane (including deepseek-routed hints) runs via reasonix-cli,
   // which needs no key, instead of 401-ing on claude-deepseek-pro.
   const forceReasonixOnly = Boolean(globalThis.__claudeReasonixForceReasonixOnly)
 
@@ -274,8 +274,8 @@ const __claudeReasonixNativeAgentType = (opts = {}) => {
   // launcher points each reasonix-* agent MODEL at claude-reasonix-flash, so the
   // lane runs on Reasonix. Emitting a name --agents never defines / the hook never
   // whitelists breaks the lane — keep all three sites byte-identical.
-  // Back-compat: a caller may still pass an explicit legacy codex-*/deepseek-*
-  // agentType (a session whose launcher predates this rename); pass it through.
+  // Back-compat: a caller may still pass an explicit legacy agentType name
+  // (a session whose launcher predates this rename); pass it through.
 
   if (explicit.startsWith('reasonix-')) return explicit
   if (explicit.startsWith('codex-')) return explicit
@@ -305,22 +305,22 @@ const __reasonixWorkflowAgent = async (prompt, opts = {}) => {
 
 def wrapper_source_fleet() -> str:
     return r"""
-// Injected by claude-codex: real Claude Code Workflow remains active, but
-// each workflow worker lane is routed through Codex Fleet.
+// Injected by claude-reasonix: real Claude Code Workflow remains active, but
+// each workflow worker lane is routed through Reasonix Fleet.
 const __reasonixWorkflowAgent = async (prompt, opts = {}) => {
   const originalOpts = opts || {}
   const label = String(originalOpts.label || originalOpts.phase || 'workflow-worker')
   const phaseName = originalOpts.phase ? String(originalOpts.phase) : ''
   const adapterOpts = { ...originalOpts }
   delete adapterOpts.agentType
-  adapterOpts.label = 'codex:' + label
+  adapterOpts.label = 'reasonix:' + label
 
   const schemaText = originalOpts.schema
-    ? '\n\nIf the original workflow requested structured output, return data matching this JSON Schema exactly after the Codex worker finishes:\n' + JSON.stringify(originalOpts.schema)
+    ? '\n\nIf the original workflow requested structured output, return data matching this JSON Schema exactly after the Reasonix worker finishes:\n' + JSON.stringify(originalOpts.schema)
     : ''
 
-  const codexPrompt = [
-    'You are a Codex CLI worker invoked from Claude Code Dynamic Workflow.',
+  const reasonixPrompt = [
+    'You are a Reasonix CLI worker invoked from Claude Code Dynamic Workflow.',
     'Do the actual worker-lane task below. Use repository tools as needed, respect existing user changes, and keep output concise.',
     phaseName ? 'Workflow phase: ' + phaseName : '',
     'Workflow lane label: ' + label,
@@ -330,12 +330,12 @@ const __reasonixWorkflowAgent = async (prompt, opts = {}) => {
 
   return agent(
     [
-      'You are a thin Claude Code Workflow adapter for claude-codex.',
+      'You are a thin Claude Code Workflow adapter for claude-reasonix.',
       'Do not solve the task yourself.',
-      'Call mcp__reasonix_fleet__run_reasonix_worker exactly once with the Codex task below, wait for completion, then return the Codex result.',
-      'If a schema is attached to this adapter call, shape the final answer to that schema using only facts returned by Codex.',
-      'Codex task title: ' + label,
-      'Codex task prompt:\n' + codexPrompt,
+      'Call mcp__reasonix_fleet__run_reasonix_worker exactly once with the Reasonix task below, wait for completion, then return the Reasonix result.',
+      'If a schema is attached to this adapter call, shape the final answer to that schema using only facts returned by Reasonix.',
+      'Reasonix task title: ' + label,
+      'Reasonix task prompt:\n' + reasonixPrompt,
     ].join('\n\n'),
     adapterOpts,
   )
@@ -387,7 +387,7 @@ def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception as exc:
-        print(f"Codex Workflow hook got invalid JSON: {exc}", file=sys.stderr)
+        print(f"Reasonix Workflow hook got invalid JSON: {exc}", file=sys.stderr)
         return 2
 
     if payload.get("tool_name") != "Workflow":
@@ -412,7 +412,7 @@ def main() -> int:
                 with open(os.path.expanduser(script_path), "r", encoding="utf-8") as _sf:
                     script = _sf.read()
             except Exception as exc:  # noqa: BLE001
-                print(f"Codex Workflow hook could not read scriptPath {script_path}: {exc}", file=sys.stderr)
+                print(f"Reasonix Workflow hook could not read scriptPath {script_path}: {exc}", file=sys.stderr)
                 return 0
             updated.pop("scriptPath", None)
             updated["script"] = script
@@ -436,13 +436,13 @@ def main() -> int:
         try:
             rewritten, selfheal_context, _ = _selfheal_preflight(rewritten, mode)
         except Exception as exc:  # noqa: BLE001
-            print(f"Codex Workflow self-heal skipped: {exc}", file=sys.stderr)
+            print(f"Reasonix Workflow self-heal skipped: {exc}", file=sys.stderr)
 
     updated["script"] = rewritten
     if mode == "fleet":
         additional_context = (
-            "Workflow scripts are rewritten by claude-codex so each "
-            "Workflow agent lane calls Codex Fleet instead of doing "
+            "Workflow scripts are rewritten by claude-reasonix so each "
+            "Workflow agent lane calls Reasonix Fleet instead of doing "
             "the worker task as a Claude subagent."
         )
     elif mode == "router":
@@ -450,7 +450,7 @@ def main() -> int:
             "Workflow scripts are rewritten by claude-reasonix so the real "
             "Claude Code Workflow/Dynamic Workflow runtime remains active, "
             "but each agent() lane runs as native Claude Code subagents. "
-            "Claude Code Router routes the generated codex-* and deepseek-* "
+            "Claude Code Router routes the generated reasonix-* and deepseek-* "
             "native Claude Code subagent types to claude-reasonix-flash "
             "through the local gateway. This hook does not auto-enable UltraCode."
         )

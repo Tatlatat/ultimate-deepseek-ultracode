@@ -15,7 +15,7 @@ HOOK = Path(__file__).resolve().parent.parent / "hooks" / "reasonix-workflow.py"
 # finds a lane (count > 0) and the hook emits additionalContext.
 SCRIPT = (
     "export const meta = { name: 'x', description: 'y' }\n"
-    "const a = await agent('audit', {label:'arch', agentType:'codex-worker'})\n"
+    "const a = await agent('audit', {label:'arch', agentType:'reasonix-worker'})\n"
 )
 PAYLOAD = {
     "tool_name": "Workflow",
@@ -31,7 +31,7 @@ def run_hook(env_overrides: dict) -> dict:
         else:
             env[k] = v
     # Force a deterministic mode so the test is independent of the launcher env.
-    env.setdefault("CLAUDE_CODEX_WORKFLOW_MODE", "native")
+    env.setdefault("CLAUDE_REASONIX_WORKFLOW_MODE", "native")
     proc = subprocess.run(
         [sys.executable, str(HOOK)],
         input=json.dumps(PAYLOAD),
@@ -54,7 +54,7 @@ def _ctx(out: dict) -> str:
 
 
 def test_guide_present_when_on():
-    out = run_hook({"CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE": "1"})
+    out = run_hook({"CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE": "1"})
     ctx = _ctx(out)
     expect("PROMPT-CACHE NOTE" in ctx, "guide must be present when gate is on")
     expect("Per-lane data scope" in ctx, "guide rule 1 must be present")
@@ -63,7 +63,7 @@ def test_guide_present_when_on():
 
 def test_guide_absent_when_off():
     for val in ("0", "false", "no", "off", "OFF"):
-        out = run_hook({"CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE": val})
+        out = run_hook({"CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE": val})
         ctx = _ctx(out)
         expect("PROMPT-CACHE NOTE" not in ctx, f"guide must be absent when gate={val!r}")
 
@@ -71,14 +71,14 @@ def test_guide_absent_when_off():
 def test_guide_default_on():
     # Force the key absent so the subprocess sees it unset (default → on),
     # regardless of what is in the real environment.
-    out = run_hook({"CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE": None})
+    out = run_hook({"CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE": None})
     expect("PROMPT-CACHE NOTE" in _ctx(out), "guide must default to on when env unset")
 
 
 def test_mode_and_structure_preserved():
     # With the guide on, the native-mode context text must still be present and
     # the guide must be APPENDED (mode text first, guide after).
-    out = run_hook({"CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE": "1"})
+    out = run_hook({"CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE": "1"})
     ctx = _ctx(out)
     expect("native Claude Code subagents" in ctx, "native mode context must survive")
     expect(ctx.index("native Claude Code subagents") < ctx.index("PROMPT-CACHE NOTE"),
@@ -87,13 +87,13 @@ def test_mode_and_structure_preserved():
 
 def test_guide_appends_in_each_mode():
     for mode, marker in (
-        ("fleet", "Codex Fleet"),
+        ("fleet", "Reasonix Fleet"),
         ("router", "Claude Code Router routes"),
         ("native", "native Claude Code subagents"),
     ):
         out = run_hook({
-            "CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE": "1",
-            "CLAUDE_CODEX_WORKFLOW_MODE": mode,
+            "CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE": "1",
+            "CLAUDE_REASONIX_WORKFLOW_MODE": mode,
         })
         ctx = _ctx(out)
         expect(marker in ctx, f"{mode} mode context text must be present")

@@ -19,11 +19,11 @@ def _build_env(monkeyenv: dict) -> dict:
     so the test pins the exact decision without spawning reasonix."""
     saved = dict(os.environ)
     try:
-        for k in ("CLAUDE_CODEX_GATEWAY_REASONIX_EPHEMERAL", "REASONIX_ACP_EPHEMERAL_SESSION"):
+        for k in ("CLAUDE_REASONIX_GATEWAY_REASONIX_EPHEMERAL", "REASONIX_ACP_EPHEMERAL_SESSION"):
             os.environ.pop(k, None)
         os.environ.update(monkeyenv)
         reasonix_env = dict(os.environ)
-        if gw.env_first("CLAUDE_CODEX_GATEWAY_REASONIX_EPHEMERAL", default="1") not in {"0", "false", "no", "off"}:
+        if gw.env_first("CLAUDE_REASONIX_GATEWAY_REASONIX_EPHEMERAL", "CLAUDE_CODEX_GATEWAY_REASONIX_EPHEMERAL", default="1") not in {"0", "false", "no", "off"}:
             reasonix_env.setdefault("REASONIX_ACP_EPHEMERAL_SESSION", "1")
         return reasonix_env
     finally:
@@ -38,7 +38,7 @@ def test_default_on():
 
 
 def test_kill_switch_disables():
-    env = _build_env({"CLAUDE_CODEX_GATEWAY_REASONIX_EPHEMERAL": "0"})
+    env = _build_env({"CLAUDE_REASONIX_GATEWAY_REASONIX_EPHEMERAL": "0"})
     expect("REASONIX_ACP_EPHEMERAL_SESSION" not in env,
            "kill-switch leaves the reasonix var unset -> stock session behavior")
 

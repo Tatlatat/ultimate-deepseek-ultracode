@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SERVER_NAME = "codex-fleet"
+SERVER_NAME = "reasonix-fleet"
 SERVER_VERSION = "1.0.0"
 
 
@@ -27,7 +27,7 @@ def env_int(name: str, default: int) -> int:
 DEFAULT_CONCURRENCY = env_int("REASONIX_FLEET_DEFAULT_CONCURRENCY", 16)
 DEFAULT_TIMEOUT = env_int("REASONIX_FLEET_TIMEOUT_SECONDS", 1800)
 DEFAULT_MAX_OUTPUT = env_int("REASONIX_FLEET_MAX_OUTPUT_CHARS", 8000)
-CODEX_BIN = os.getenv("CODEX_BIN", "codex")
+REASONIX_BIN = os.getenv("REASONIX_BIN", os.getenv("CODEX_BIN", "reasonix"))
 LOG_DIR = Path(os.getenv("REASONIX_FLEET_LOG_DIR", "/Users/tatlatat/.claude/codex-fleet/runtime/logs"))
 
 
@@ -103,7 +103,7 @@ async def run_one_task(task: dict[str, Any], index: int, batch_id: str, max_outp
     model = task_value(task, "model", "CLAUDE_REASONIX_REASONIX_MODEL", "deepseek-v4-flash")
     config = {"reasonix_bin": os.getenv("REASONIX_BIN", "reasonix"),
               "target_model": model}
-    # run_reasonix_acp reads cwd from CLAUDE_CODEX_GATEWAY_CODEX_CWD.
+    # run_reasonix_acp reads cwd from CLAUDE_REASONIX_GATEWAY_CODEX_CWD.
     prev_cwd = os.environ.get("CLAUDE_REASONIX_GATEWAY_CODEX_CWD", os.environ.get("CLAUDE_CODEX_GATEWAY_CODEX_CWD"))
     os.environ["CLAUDE_REASONIX_GATEWAY_CODEX_CWD"] = cwd_text
     try:
@@ -220,7 +220,7 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "run_reasonix_fleet",
-            "description": "Run any number of Codex CLI subagent tasks through a dynamic queue. Use this for dynamic workflows and large batches.",
+            "description": "Run any number of Reasonix CLI subagent tasks through a dynamic queue. Use this for dynamic workflows and large batches.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -235,7 +235,7 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "fleet_status",
-            "description": "Show Codex Fleet runtime defaults.",
+            "description": "Show Reasonix Fleet runtime defaults.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     ]
@@ -248,7 +248,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         payload = await run_worker(arguments)
     elif name == "fleet_status":
         payload = {
-            "codex_bin": CODEX_BIN,
+            "reasonix_bin": REASONIX_BIN,
             "default_concurrency": DEFAULT_CONCURRENCY,
             "default_timeout_seconds": DEFAULT_TIMEOUT,
             "default_max_output_chars": DEFAULT_MAX_OUTPUT,

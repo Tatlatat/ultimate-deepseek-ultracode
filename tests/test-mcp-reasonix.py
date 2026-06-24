@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""The codex-fleet MCP must run REASONIX (not codex) when CLAUDE_CODEX_FLAVOR=reasonix.
+"""The reasonix-fleet MCP must run REASONIX (not the legacy CLI) when CLAUDE_REASONIX_FLAVOR=reasonix.
 
 Root cause this guards: in a claude-reasonix session, single subagents are pushed
-to the reasonix_fleet MCP by only-codex-fleet.py, but the MCP ran `codex exec` = Codex,
+to the reasonix_fleet MCP by only-reasonix-fleet.py, but the MCP ran `reasonix exec` = old Reasonix CLI,
 so "every agent is reasonix" was false. The MCP must dispatch through reasonix acp
 when the session flavor is reasonix.
 
 The test drives the MCP's per-task runner against a fake reasonix binary that
 speaks ACP and writes a transcript with a cost record, and asserts the task result
-came from reasonix (cost captured), not from a codex subprocess.
+came from reasonix (cost captured), not from a legacy subprocess.
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def make_fake_reasonix():
 
 def test_mcp_runs_reasonix_in_reasonix_flavor():
     fake = make_fake_reasonix()
-    os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
+    os.environ["CLAUDE_REASONIX_FLAVOR"] = "reasonix"
     os.environ["REASONIX_BIN"] = fake
     try:
         spec.loader.exec_module(mcp)  # load with reasonix env set
@@ -81,7 +81,7 @@ def test_mcp_runs_reasonix_in_reasonix_flavor():
         expect(result.get("reasonix_cost_usd") == 0.000222,
                f"reasonix cost must be captured: {result}")
     finally:
-        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+        os.environ.pop("CLAUDE_REASONIX_FLAVOR", None)
         os.environ.pop("REASONIX_BIN", None)
 
 

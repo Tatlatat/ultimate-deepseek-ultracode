@@ -76,7 +76,7 @@ required = {
     "mcp__reasonix_fleet__fleet_status",
 }
 if not required.issubset(set(permissions)):
-    raise SystemExit(f"bridge settings must allow Codex Fleet MCP tools: {permissions}")
+    raise SystemExit(f"bridge settings must allow Reasonix Fleet MCP tools: {permissions}")
 PY
 
 tmp_home="$(mktemp -d)"
@@ -85,17 +85,17 @@ trap 'rm -rf "$tmp_home"' EXIT
 # Point the launcher at the REPO as its install home so it loads the renamed
 # gateway/mcp/hooks/settings under test (not a stale ~/.claude install).
 export CLAUDE_REASONIX_FLEET_INSTALL_HOME="$ROOT"
-export CLAUDE_CODEX_FLEET_HOME="$tmp_home/fleet"
+export CLAUDE_REASONIX_FLEET_HOME="$tmp_home/fleet"
 export CLAUDE_BIN="/bin/echo"
 export CODEX_BIN="/bin/echo"
 export CCR_BIN="/bin/echo"
 export ANTHROPIC_API_KEY="test-anthropic-key"
-export CLAUDE_CODEX_GATEWAY_MOCK=1
-export CLAUDE_CODEX_QWEN_SKIP_START=1
-export CLAUDE_CODEX_KEEP_ROUTER_RUNTIME=1
+export CLAUDE_REASONIX_GATEWAY_MOCK=1
+export CLAUDE_REASONIX_QWEN_SKIP_START=1
+export CLAUDE_REASONIX_KEEP_ROUTER_RUNTIME=1
 
 latest_router_config() {
-  find "$CLAUDE_CODEX_FLEET_HOME/runtime/router-sessions" \
+  find "$CLAUDE_REASONIX_FLEET_HOME/runtime/router-sessions" \
     -path '*/.claude-code-router/config.json' \
     -type f -print 2>/dev/null | sort | tail -n 1
 }
@@ -112,11 +112,11 @@ import sys
 import time
 
 gateway_path = sys.argv[1]
-os.environ["CLAUDE_CODEX_CODEX_BACKEND"] = "codex-cli"
-os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK", None)
+os.environ["CLAUDE_REASONIX_CODEX_BACKEND"] = "codex-cli"
+os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK", None)
 # Force the wait loop to tick quickly so a heartbeat is emitted before the result.
-os.environ["CLAUDE_CODEX_GATEWAY_STREAM_KEEPALIVE_SECONDS"] = "1"
-spec = importlib.util.spec_from_file_location("codex_native_gateway_stream", gateway_path)
+os.environ["CLAUDE_REASONIX_GATEWAY_STREAM_KEEPALIVE_SECONDS"] = "1"
+spec = importlib.util.spec_from_file_location("reasonix_native_gateway_stream", gateway_path)
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
@@ -199,7 +199,7 @@ if idx0_stop is None or idx1_start is None or idx0_stop >= idx1_start:
     raise SystemExit(f"heartbeat block (index 0) must close before real block (index 1) opens: {events}")
 PY
 
-# Regression: the gateway codex timeout default must be the watchdog-safe 600s (not 165s),
+# Regression: the gateway reasonix timeout default must be the watchdog-safe 600s (not 165s),
 # so legitimate long web-search lanes are not killed mid-work.
 python3 - "$GATEWAY" <<'PY'
 import importlib.util
@@ -207,15 +207,15 @@ import os
 import sys
 
 gateway_path = sys.argv[1]
-os.environ.pop("CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", None)
+os.environ.pop("CLAUDE_REASONIX_GATEWAY_CODEX_TIMEOUT", None)
 os.environ.pop("REASONIX_FLEET_TIMEOUT_SECONDS", None)
-spec = importlib.util.spec_from_file_location("codex_native_gateway_timeout_default", gateway_path)
+spec = importlib.util.spec_from_file_location("reasonix_native_gateway_timeout_default", gateway_path)
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
-default = module.env_first("CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "REASONIX_FLEET_TIMEOUT_SECONDS", default="600")
+default = module.env_first("CLAUDE_REASONIX_GATEWAY_CODEX_TIMEOUT", "REASONIX_FLEET_TIMEOUT_SECONDS", default="600")
 if float(default) < 600:
-    raise SystemExit(f"codex timeout default must be >= 600s, got {default}")
+    raise SystemExit(f"reasonix timeout default must be >= 600s, got {default}")
 PY
 
 python3 - "$GATEWAY" <<'PY'
@@ -223,7 +223,7 @@ import importlib.util
 import sys
 
 gateway_path = sys.argv[1]
-spec = importlib.util.spec_from_file_location("codex_native_gateway_prompt_schema", gateway_path)
+spec = importlib.util.spec_from_file_location("reasonix_native_gateway_prompt_schema", gateway_path)
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
@@ -295,27 +295,27 @@ grep -q "disabled" <<<"$disabled_status" || fail "status should report disabled"
 # reasonix flavor defaults to NATIVE subagents; force fleet mode to exercise the
 # fleet-path flag hygiene these assertions validate (--disallowedTools, no --agents).
 bare_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 "$LAUNCHER" "bare prompt")"
-grep -q -- "--mcp-config" <<<"$bare_output" || fail "bare claude-codex should start fleet even when status is disabled"
-grep -q -- "--disallowedTools Agent,Task" <<<"$bare_output" || fail "safe claude-codex should block generic Claude Agent/Task"
+grep -q -- "--mcp-config" <<<"$bare_output" || fail "bare claude-reasonix should start fleet even when status is disabled"
+grep -q -- "--disallowedTools Agent,Task" <<<"$bare_output" || fail "safe claude-reasonix should block generic Claude Agent/Task"
 if grep -q -- " --agents {" <<<"$bare_output"; then
-  fail "safe claude-codex should not define gateway native subagents by default"
+  fail "safe claude-reasonix should not define gateway native subagents by default"
 fi
 if grep -q -- "--allowedTools" <<<"$bare_output"; then
-  fail "bare claude-codex should not allow-list only reasonix_fleet"
+  fail "bare claude-reasonix should not allow-list only reasonix_fleet"
 fi
 if grep -q -- "--tools " <<<"$bare_output"; then
-  fail "bare claude-codex should not disable Claude native tools"
+  fail "bare claude-reasonix should not disable Claude native tools"
 fi
 if grep -q -- "--strict-mcp-config" <<<"$bare_output"; then
-  fail "bare claude-codex should not block normal MCP/plugins"
+  fail "bare claude-reasonix should not block normal MCP/plugins"
 fi
-grep -q "bare prompt" <<<"$bare_output" || fail "bare claude-codex should forward prompt"
+grep -q "bare prompt" <<<"$bare_output" || fail "bare claude-reasonix should forward prompt"
 plain_output="$("$LAUNCHER" plain "plain prompt")"
 if grep -q -- "--mcp-config" <<<"$plain_output"; then
   fail "plain mode should bypass fleet"
 fi
 if grep -q -- " --agents {" <<<"$plain_output"; then
-  fail "plain mode should not define claude-codex native subagents"
+  fail "plain mode should not define claude-reasonix native subagents"
 fi
 grep -q "plain prompt" <<<"$plain_output" || fail "plain mode should forward prompt"
 
@@ -325,17 +325,17 @@ grep -q "enabled" <<<"$enabled_status" || fail "status should report enabled"
 grep -q "default concurrency: 3" <<<"$enabled_status" || fail "status should show default concurrency"
 
 cat >"$tmp_home/ps-fixture.txt" <<EOF
-12345 claude --mcp-config $CLAUDE_CODEX_FLEET_HOME/runtime/mcp.json --append-system-prompt Every Codex worker defaults to GPT-5.5 --disallowedTools Agent,Task
+12345 claude --mcp-config $CLAUDE_REASONIX_FLEET_HOME/runtime/mcp.json --append-system-prompt Every Reasonix worker defaults to GPT-5.5 --disallowedTools Agent,Task
 EOF
-stale_status="$(CLAUDE_CODEX_PS_FIXTURE="$tmp_home/ps-fixture.txt" "$LAUNCHER" status)"
-grep -q "active claude-codex sessions:" <<<"$stale_status" || fail "status should report active claude-codex sessions"
+stale_status="$(CLAUDE_REASONIX_PS_FIXTURE="$tmp_home/ps-fixture.txt" "$LAUNCHER" status)"
+grep -q "active claude-reasonix sessions:" <<<"$stale_status" || fail "status should report active claude-reasonix sessions"
 grep -q "pid=12345" <<<"$stale_status" || fail "status should include stale session pid"
 grep -q "mode=fleet" <<<"$stale_status" || fail "status should classify fleet session mode"
 grep -q "stale_model=gpt-5.5" <<<"$stale_status" || fail "status should flag stale gpt-5.5 sessions"
 grep -q "restart required" <<<"$stale_status" || fail "status should tell the user to restart stale sessions"
 
 "$LAUNCHER" generate-config >/dev/null
-python3 - "$CLAUDE_CODEX_FLEET_HOME/runtime/mcp.json" <<'PY'
+python3 - "$CLAUDE_REASONIX_FLEET_HOME/runtime/mcp.json" <<'PY'
 import json
 import os
 import sys
@@ -383,7 +383,7 @@ if grep -q -- "--strict-mcp-config" <<<"$run_output"; then
 fi
 grep -q "test prompt" <<<"$run_output" || fail "run should forward prompt args"
 
-native_output="$(CLAUDE_CODEX_NATIVE_SUBAGENTS=1 "$LAUNCHER" run "native prompt")"
+native_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 "$LAUNCHER" run "native prompt")"
 grep -q -- " --agents {" <<<"$native_output" || fail "opt-in native gateway mode should pass native subagent definitions"
 grep -q "claude-reasonix-flash" <<<"$native_output" || fail "opt-in native gateway mode should include the Reasonix-backed model"
 if grep -q -- "--disallowedTools Agent,Task" <<<"$native_output"; then
@@ -466,15 +466,15 @@ printf 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=%s\n' "${ANTHROPIC_CUSTOM_MODEL_OPTIO
 printf 'ARGS=%s\n' "$*"
 SH
 chmod +x "$claude_env_mock"
-native_env_output="$(CLAUDE_BIN="$claude_env_mock" CLAUDE_CODEX_NATIVE_SUBAGENTS=1 "$LAUNCHER" run "native env prompt")"
+native_env_output="$(CLAUDE_BIN="$claude_env_mock" CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 "$LAUNCHER" run "native env prompt")"
 grep -q "CLAUDE_CODE_SUBAGENT_MODEL=claude-reasonix-flash" <<<"$native_env_output" || fail "native gateway mode should force built-in subagents to the Reasonix-backed model"
 
 router_env_output="$(CLAUDE_BIN="$claude_env_mock" "$LAUNCHER" router "router env prompt")"
 grep -q "CLAUDE_CODE_SUBAGENT_MODEL=claude-reasonix-flash" <<<"$router_env_output" || fail "router mode should force built-in subagents to the Reasonix-backed model"
 grep -q "ANTHROPIC_CUSTOM_MODEL_OPTION=claude-reasonix-flash" <<<"$router_env_output" || fail "router mode should expose the Reasonix-backed custom model option"
 
-router_env_inherit_output="$(CLAUDE_BIN="$claude_env_mock" CLAUDE_CODEX_SUBAGENT_MODEL=inherit "$LAUNCHER" router "router inherit prompt")"
-grep -q "CLAUDE_CODE_SUBAGENT_MODEL=inherit" <<<"$router_env_inherit_output" || fail "router mode should honor explicit CLAUDE_CODEX_SUBAGENT_MODEL overrides"
+router_env_inherit_output="$(CLAUDE_BIN="$claude_env_mock" CLAUDE_REASONIX_SUBAGENT_MODEL=inherit "$LAUNCHER" router "router inherit prompt")"
+grep -q "CLAUDE_CODE_SUBAGENT_MODEL=inherit" <<<"$router_env_inherit_output" || fail "router mode should honor explicit CLAUDE_REASONIX_SUBAGENT_MODEL overrides"
 
 router_qwen_env_output="$(CLAUDE_BIN="$claude_env_mock" "$LAUNCHER" router-qwen "router qwen env prompt")"
 grep -q "CLAUDE_CODE_SUBAGENT_MODEL=claude-reasonix-flash" <<<"$router_qwen_env_output" || fail "router-qwen should still force subagents to the Reasonix-backed model by default"
@@ -485,7 +485,7 @@ grep -q "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=qwen36-mlx" <<<"$router_qwen_env_out
 grep -q -- "--model qwen36-mlx" <<<"$router_qwen_env_output" || fail "router-qwen env smoke should still select the local Qwen model"
 
 "$LAUNCHER" generate-ccr-config >/dev/null
-python3 - "$CLAUDE_CODEX_FLEET_HOME/runtime/ccr-home/.claude-code-router/config.json" <<'PY'
+python3 - "$CLAUDE_REASONIX_FLEET_HOME/runtime/ccr-home/.claude-code-router/config.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -547,11 +547,11 @@ printf '{"tool_name":"Edit"}' | python3 "$HOOK"
 if printf '{"tool_name":"Agent"}' | python3 "$HOOK" 2>/dev/null; then
   fail "hook should block Claude subagent tools"
 fi
-printf '{"tool_name":"Agent","tool_input":{"subagent_type":"reasonix-security"}}' | CLAUDE_CODEX_NATIVE_SUBAGENTS=1 python3 "$HOOK"
+printf '{"tool_name":"Agent","tool_input":{"subagent_type":"reasonix-security"}}' | CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 python3 "$HOOK"
 # Legacy codex-*/deepseek-* agentTypes are still whitelisted for in-flight back-compat.
-printf '{"tool_name":"Agent","tool_input":{"subagent_type":"codex-security"}}' | CLAUDE_CODEX_NATIVE_SUBAGENTS=1 python3 "$HOOK"
-printf '{"tool_name":"Agent","tool_input":{"subagent_type":"deepseek-deep"}}' | CLAUDE_CODEX_NATIVE_SUBAGENTS=1 python3 "$HOOK"
-if printf '{"tool_name":"Agent","tool_input":{"subagent_type":"Explore"}}' | CLAUDE_CODEX_NATIVE_SUBAGENTS=1 python3 "$HOOK" 2>/dev/null; then
+printf '{"tool_name":"Agent","tool_input":{"subagent_type":"codex-security"}}' | CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 python3 "$HOOK"
+printf '{"tool_name":"Agent","tool_input":{"subagent_type":"deepseek-deep"}}' | CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 python3 "$HOOK"
+if printf '{"tool_name":"Agent","tool_input":{"subagent_type":"Explore"}}' | CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 python3 "$HOOK" 2>/dev/null; then
   fail "native mode should still block non-Reasonix agents"
 fi
 if printf '{"tool_name":"Task"}' | python3 "$HOOK" 2>/dev/null; then
@@ -564,7 +564,7 @@ if printf '{"tool_name":"SpawnAgent"}' | python3 "$HOOK" 2>/dev/null; then
   fail "hook should block native SpawnAgent tools"
 fi
 
-CLAUDE_CODEX_WORKFLOW_MODE=native python3 - "$WORKFLOW_HOOK" <<'PY'
+CLAUDE_REASONIX_WORKFLOW_MODE=native python3 - "$WORKFLOW_HOOK" <<'PY'
 import json
 import os
 import subprocess
@@ -582,7 +582,7 @@ payload = {
         ]),
     },
 }
-env = dict(os.environ, CLAUDE_CODEX_WORKFLOW_MODE="native")
+env = dict(os.environ, CLAUDE_REASONIX_WORKFLOW_MODE="native")
 proc = subprocess.run(
     [sys.executable, sys.argv[1]],
     input=json.dumps(payload),
@@ -596,11 +596,11 @@ out = json.loads(proc.stdout)
 updated = out["hookSpecificOutput"]["updatedInput"]
 script = updated["script"]
 if "__reasonixWorkflowAgent" not in script:
-    raise SystemExit("Workflow hook did not inject native Codex wrapper")
+    raise SystemExit("Workflow hook did not inject native Reasonix wrapper")
 if "await __reasonixWorkflowAgent('inspect security'" not in script:
     raise SystemExit("Workflow hook did not rewrite agent calls")
 if "mcp__reasonix_fleet__run_reasonix_worker" in script:
-    raise SystemExit("native Workflow hook should not route through Codex Fleet MCP")
+    raise SystemExit("native Workflow hook should not route through Reasonix Fleet MCP")
 if "reasonix-security" not in script:
     raise SystemExit("native Workflow hook should include a Reasonix security agent mapping")
 if "reasonix-worker" not in script:
@@ -609,7 +609,7 @@ if "native Claude Code subagents" not in out["hookSpecificOutput"].get("addition
     raise SystemExit("Workflow hook should add context about the rewrite")
 PY
 
-CLAUDE_CODEX_WORKFLOW_MODE=router python3 - "$WORKFLOW_HOOK" <<'PY'
+CLAUDE_REASONIX_WORKFLOW_MODE=router python3 - "$WORKFLOW_HOOK" <<'PY'
 import json
 import os
 import subprocess
@@ -621,7 +621,7 @@ payload = {
         "script": "phase('CodeReview')\nconst result = await agent('inspect repo', { label: 'cloud:security', phase: 'CodeReview' })\nreturn result\n",
     },
 }
-env = dict(os.environ, CLAUDE_CODEX_WORKFLOW_MODE="router")
+env = dict(os.environ, CLAUDE_REASONIX_WORKFLOW_MODE="router")
 proc = subprocess.run(
     [sys.executable, sys.argv[1]],
     input=json.dumps(payload),
@@ -634,11 +634,11 @@ proc = subprocess.run(
 out = json.loads(proc.stdout)
 script = out["hookSpecificOutput"]["updatedInput"]["script"]
 if "__reasonixWorkflowAgent" not in script:
-    raise SystemExit("router Workflow hook did not inject Codex wrapper")
+    raise SystemExit("router Workflow hook did not inject Reasonix wrapper")
 if "reasonix-security" not in script:
     raise SystemExit("router Workflow hook should route security lanes to reasonix-security")
 if "mcp__reasonix_fleet__run_reasonix_worker" in script:
-    raise SystemExit("router Workflow hook should not route through Codex Fleet MCP")
+    raise SystemExit("router Workflow hook should not route through Reasonix Fleet MCP")
 context = out["hookSpecificOutput"].get("additionalContext", "")
 if "Claude Code Router" not in context or "native Claude Code subagents" not in context:
     raise SystemExit(f"router Workflow hook should describe CCR native subagents: {context}")
@@ -667,7 +667,7 @@ proc = subprocess.run(
 out = json.loads(proc.stdout)
 script = out["hookSpecificOutput"]["updatedInput"]["script"]
 if "mcp__reasonix_fleet__run_reasonix_worker" not in script:
-    raise SystemExit("legacy fleet Workflow hook should still route through Codex Fleet MCP")
+    raise SystemExit("legacy fleet Workflow hook should still route through Reasonix Fleet MCP")
 PY
 
 printf '{"tool_name":"Workflow","tool_input":{"name":"missing-saved-workflow","args":"x"}}' | python3 "$WORKFLOW_HOOK"
@@ -675,7 +675,7 @@ printf '{"tool_name":"Workflow","tool_input":{"name":"missing-saved-workflow","a
 "$LAUNCHER" workers 200 >/dev/null
 "$LAUNCHER" generate-config >/dev/null
 "$LAUNCHER" generate-agents >/dev/null
-python3 - "$CLAUDE_CODEX_FLEET_HOME/runtime/agents.json" <<'PY'
+python3 - "$CLAUDE_REASONIX_FLEET_HOME/runtime/agents.json" <<'PY'
 import json
 import sys
 
@@ -968,7 +968,7 @@ PY
 kill "$passthrough_proxy_pid" "$targets_pid"
 wait "$passthrough_proxy_pid" 2>/dev/null || true
 wait "$targets_pid" 2>/dev/null || true
-python3 - "$CLAUDE_CODEX_FLEET_HOME/runtime/mcp.json" <<'PY'
+python3 - "$CLAUDE_REASONIX_FLEET_HOME/runtime/mcp.json" <<'PY'
 import json
 import sys
 
@@ -979,21 +979,21 @@ if server["env"].get("REASONIX_FLEET_DEFAULT_CONCURRENCY") != "200":
     raise SystemExit("workers 200 should set default concurrency to 200")
 PY
 
-echo "PASS: codex fleet launcher"
+echo "PASS: reasonix fleet launcher"
 
 python3 "$ROOT/tests/test-workflow-selfheal.py" || fail "workflow self-heal regression"
 
-# Verify the launcher itself wires the reasonix flavor
-LAUNCHER_BIN="$HOME/.local/bin/claude-codex"
+# Verify the REPO launcher (the source of truth under test) wires the reasonix flavor.
+# Install-location concerns (symlink, ~/.local/bin) are validated by the install test.
+LAUNCHER_BIN="$LAUNCHER"
 [[ -f "$LAUNCHER_BIN" ]] || fail "launcher not found at $LAUNCHER_BIN"
-grep -Eq 'CLAUDE_CODEX_FLAVOR="?reasonix"?' "$LAUNCHER_BIN" || fail "launcher must set CLAUDE_CODEX_FLAVOR=reasonix"
+grep -Eq 'CLAUDE_REASONIX_FLAVOR="?reasonix"?' "$LAUNCHER_BIN" || fail "launcher must set CLAUDE_REASONIX_FLAVOR=reasonix"
 grep -q 'claude-reasonix-flash' "$LAUNCHER_BIN" || fail "launcher reasonix flavor must force claude-reasonix-flash"
 grep -q "REASONIX_BIN" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must export REASONIX_BIN (gateway needs reasonix+node on PATH)"
-grep -q "CLAUDE_CODEX_CCR_CODEX_ROUTE.*claude-reasonix-flash" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must route worker agents to claude-reasonix-flash, not codex"
-grep -q "CLAUDE_CODEX_CCR_DEEPSEEK_MODEL.*claude-reasonix-flash" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must point deepseek-* agent model at reasonix-flash (else they die Not-logged-in)"
-[[ -L "$HOME/.local/bin/claude-reasonix" ]] || fail "claude-reasonix must be a symlink"
+grep -q "CLAUDE_REASONIX_CCR_CODEX_ROUTE.*claude-reasonix-flash" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must route worker agents to claude-reasonix-flash, not codex"
+grep -q "CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL.*claude-reasonix-flash" "$LAUNCHER_BIN" || fail "launcher reasonix flavor must point deepseek-* agent model at reasonix-flash (else they die Not-logged-in)"
 
-CLAUDE_CODEX_FLAVOR=reasonix python3 - "$GATEWAY" <<'PY' || fail "reasonix flavor must expose claude-reasonix-flash"
+CLAUDE_REASONIX_FLAVOR=reasonix python3 - "$GATEWAY" <<'PY' || fail "reasonix flavor must expose claude-reasonix-flash"
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("g", sys.argv[1])
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
@@ -1008,19 +1008,19 @@ PY
 env -u CLAUDE_CODEX_GATEWAY_MOCK -u CLAUDE_REASONIX_GATEWAY_MOCK \
   python3 "$ROOT/tests/test-reasonix-acp.py" || fail "reasonix acp driver regression"
 
-if [[ "${CLAUDE_CODEX_REASONIX_E2E:-0}" == "1" ]]; then
+if [[ "${CLAUDE_REASONIX_E2E:-0}" == "1" ]]; then
   bash "$ROOT/tests/test-reasonix-e2e.sh" || fail "reasonix e2e"
 else
-  echo "SKIP: reasonix e2e (set CLAUDE_CODEX_REASONIX_E2E=1 to run)"
+  echo "SKIP: reasonix e2e (set CLAUDE_REASONIX_E2E=1 to run)"
 fi
 
 python3 "$ROOT/tests/test-reasonix-cost-ledger.py" || fail "reasonix cost ledger regression"
 
 # Hook flavor-awareness: reasonix flavor must NOT block the native Agent tool
-# (so subagents route to reasonix, not the reasonix_fleet MCP); codex flavor still blocks.
-echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_CODEX_FLAVOR=reasonix python3 "$ROOT/hooks/only-reasonix-fleet.py" >/dev/null 2>&1 && fail "reasonix flavor must STILL block Agent (push to reasonix MCP, not native which hangs)"
-echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_CODEX_FLAVOR=codex CLAUDE_CODEX_NATIVE_SUBAGENTS=0 python3 "$ROOT/hooks/only-reasonix-fleet.py" >/dev/null 2>&1 && fail "codex flavor must still block the Agent tool"
-echo "PASS: only-codex-fleet flavor-aware"
+# (so subagents route to reasonix, not the reasonix_fleet MCP); the legacy flavor still blocks Agent.
+echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_REASONIX_FLAVOR=reasonix python3 "$ROOT/hooks/only-reasonix-fleet.py" >/dev/null 2>&1 && fail "reasonix flavor must STILL block Agent (push to reasonix MCP, not native which hangs)"
+echo '{"tool_name":"Agent","tool_input":{"prompt":"x"}}' | CLAUDE_REASONIX_FLAVOR=codex CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 python3 "$ROOT/hooks/only-reasonix-fleet.py" >/dev/null 2>&1 && fail "codex flavor must still block the Agent tool"
+echo "PASS: only-reasonix-fleet flavor-aware"
 
 # Like the acp test, this drives the real reasonix engine via its own fake driver
 # and must not be intercepted by the suite-level GATEWAY_MOCK switch.

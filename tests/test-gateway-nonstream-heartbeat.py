@@ -30,7 +30,7 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 GW_PATH = ROOT / "reasonix-native-gateway.py"
 
-spec = importlib.util.spec_from_file_location("codex_native_gateway_hb", GW_PATH)
+spec = importlib.util.spec_from_file_location("reasonix_native_gateway_hb", GW_PATH)
 gw = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 spec.loader.exec_module(gw)
@@ -143,7 +143,7 @@ def test_heartbeat_fires_before_slow_producer_returns():
     heartbeat delta must reach the wire BEFORE the producer finishes — that is
     exactly what keeps the 180s watchdog from firing."""
     import os
-    os.environ["CLAUDE_CODEX_GATEWAY_STREAM_KEEPALIVE_SECONDS"] = "1"
+    os.environ["CLAUDE_REASONIX_GATEWAY_STREAM_KEEPALIVE_SECONDS"] = "1"
     restore = install_fake_reasonix(block_secs=2.5)
     try:
         body = json.dumps({
@@ -159,7 +159,7 @@ def test_heartbeat_fires_before_slow_producer_returns():
                f"expected >=1 heartbeat delta during a slow producer. Got count={out.count('content_block_delta')}")
     finally:
         restore()
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_STREAM_KEEPALIVE_SECONDS", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_STREAM_KEEPALIVE_SECONDS", None)
 
 
 def main() -> int:

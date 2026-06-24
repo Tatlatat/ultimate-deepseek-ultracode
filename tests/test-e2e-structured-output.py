@@ -39,7 +39,7 @@ SCHEMA = {  # a nested schema like the real review/research lanes use
 def _start():
     # NOT mock-mode (that short-circuits before the reasonix path). Instead simulate
     # reasonix's text reply so the full structured path runs.
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK", None)
     httpd = gw.ThreadingHTTPServer(("127.0.0.1", 0), gw.Handler)
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -102,7 +102,7 @@ def _has_tool_use(resp: dict) -> dict | None:
 
 
 def test_clean_json_becomes_tool_use():
-    os.environ["CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT"] = json.dumps(
+    os.environ["CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT"] = json.dumps(
         {"findings": [{"title": "real finding"}]})
     httpd, port = _start()
     try:
@@ -113,13 +113,13 @@ def test_clean_json_becomes_tool_use():
         expect(isinstance(tu["input"].get("findings"), list), "tool_use input matches schema")
     finally:
         httpd.shutdown()
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT", None)
 
 
 def test_narration_still_yields_forced_tool_use():
     # The real killer: DeepSeek narrates instead of emitting JSON. Because the tool
     # is FORCED, the lane must STILL come back with a schema-valid tool_use, never empty.
-    os.environ["CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT"] = \
+    os.environ["CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT"] = \
         "I have completed the review and returned the findings via StructuredOutput."
     httpd, port = _start()
     try:
@@ -129,11 +129,11 @@ def test_narration_still_yields_forced_tool_use():
         expect("findings" in tu["input"], "synthesized fallback has the required schema key")
     finally:
         httpd.shutdown()
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT", None)
 
 
 def test_fenced_json_is_extracted():
-    os.environ["CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT"] = (
+    os.environ["CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT"] = (
         "Here are the results:\n```json\n" + json.dumps({"findings": [{"title": "x"}]}) + "\n```\nDone.")
     httpd, port = _start()
     try:
@@ -143,7 +143,7 @@ def test_fenced_json_is_extracted():
         expect(tu["input"]["findings"][0]["title"] == "x", "the fenced object is extracted intact")
     finally:
         httpd.shutdown()
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT", None)
 
 
 if __name__ == "__main__":

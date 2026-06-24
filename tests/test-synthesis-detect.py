@@ -52,11 +52,11 @@ def test_directive_mentions_skill():
 
 
 def test_killswitch_off():
-    os.environ["CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS"] = "0"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS"] = "0"
     try:
         expect(gw.is_heavy_synthesis(NESTED, 40000, SYNTH) is False, "killswitch off -> never heavy")
     finally:
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
 
 
 if __name__ == "__main__":

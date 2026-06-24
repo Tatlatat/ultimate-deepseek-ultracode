@@ -20,7 +20,7 @@ def test_success_resets_lane_count():
     # session, a FRESH healthy lane of that family that narrates once is force-
     # fallback'd instead of retried. A successful lane (parseable output) means the
     # family is NOT stuck looping, so the count must reset.
-    os.environ["CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAX_LANE_RETRIES"] = "3"
     gw._LANE_COUNTS.clear()
     p = "SAME FAMILY PROMPT " + ("x" * 5000)
     gw.register_lane_attempt(p)
@@ -35,7 +35,7 @@ def test_success_resets_lane_count():
 
 
 def test_reset_is_per_family():
-    os.environ["CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAX_LANE_RETRIES"] = "3"
     gw._LANE_COUNTS.clear()
     a = "FAMILY A " + ("a" * 5000)
     b = "FAMILY B " + ("b" * 5000)

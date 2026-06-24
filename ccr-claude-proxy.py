@@ -29,7 +29,7 @@ TRUE_VALUES = {"1", "true", "yes", "on"}
 def forward_timeout() -> float:
     """Upstream-request timeout for forward().
 
-    Kept just above the gateway's codex-exec budget (CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT,
+    Kept just above the gateway's reasonix-exec budget (CLAUDE_REASONIX_GATEWAY_CODEX_TIMEOUT,
     default 600s) so the gateway returns a clean 504 before this outer proxy cuts the
     socket. The old hard-coded 3600s let a wedged upstream hang a subagent for an hour.
     """
@@ -42,7 +42,7 @@ def json_bytes(data: Any) -> bytes:
 
 def trace_enabled() -> bool:
     # On by default so forward/response/timeout events land in the proxy log; the
-    # records are one compact JSON line each. Set CLAUDE_CODEX_CCR_PROXY_TRACE=0 to silence.
+    # records are one compact JSON line each. Set CLAUDE_REASONIX_CCR_PROXY_TRACE=0 to silence.
     return os.getenv("CLAUDE_REASONIX_CCR_PROXY_TRACE", os.getenv("CLAUDE_CODEX_CCR_PROXY_TRACE", "1")).lower() in TRUE_VALUES
 
 
@@ -115,7 +115,7 @@ class ProxyError(Exception):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-codex-ccr-proxy/0.1"
+    server_version = "claude-reasonix-ccr-proxy/0.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return
@@ -414,7 +414,7 @@ def main() -> int:
     actual_port = int(server.server_address[1])
     if args.port_file:
         Path(args.port_file).write_text(str(actual_port), encoding="utf-8")
-    print(f"claude-codex CCR proxy listening on http://{args.host}:{actual_port}", file=sys.stderr, flush=True)
+    print(f"claude-reasonix CCR proxy listening on http://{args.host}:{actual_port}", file=sys.stderr, flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

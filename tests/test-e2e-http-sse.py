@@ -27,7 +27,7 @@ def expect(cond, msg):
 
 
 def _start_server():
-    os.environ["CLAUDE_CODEX_GATEWAY_MOCK"] = "1"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MOCK"] = "1"
     httpd = gw.ThreadingHTTPServer(("127.0.0.1", 0), gw.Handler)
     port = httpd.server_address[1]
     t = threading.Thread(target=httpd.serve_forever, daemon=True)

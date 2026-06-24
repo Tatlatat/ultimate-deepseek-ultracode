@@ -22,7 +22,7 @@ def test_lanes_sharing_only_a_short_head_get_same_key():
     shared = "SYSTEM shared header. " * 250  # ~5.5KB common
     a = shared + "DIMENSION: CORRECTNESS\n" + "file body A " * 2000
     b = shared + "DIMENSION: CACHE\n" + "file body B " * 2000
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_PRIME_KEY_HEAD", None)
     expect(gw.prefix_prime_key(a) == gw.prefix_prime_key(b),
            "lanes sharing the leading head must share a prime key (adaptive)")
 
@@ -36,13 +36,13 @@ def test_truly_different_lanes_get_different_keys():
 
 def test_key_head_env_override():
     # The adaptive head length is configurable; a tiny head groups almost anything.
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD"] = "2048"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_KEY_HEAD"] = "2048"
     try:
         base = "X" * 2048
         expect(gw.prefix_prime_key(base + "aaaa") == gw.prefix_prime_key(base + "bbbb"),
                "with 2KB head, prompts sharing first 2KB share a key")
     finally:
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_PRIME_KEY_HEAD", None)
 
 
 if __name__ == "__main__":

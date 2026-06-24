@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Small Anthropic Messages-compatible gateway for claude-codex native agents.
+"""Small Anthropic Messages-compatible gateway for claude-reasonix native agents.
 
-The gateway is intentionally local and session-scoped.  The claude-codex
+The gateway is intentionally local and session-scoped.  The claude-reasonix
 launcher starts it, points only that Claude Code process at it, and then stops
 it when Claude exits.
 """
@@ -30,8 +30,8 @@ from uuid import uuid4
 
 
 JSON = dict[str, Any]
-_CODEX_CLI_SEMAPHORE_LOCK = threading.Lock()
-_CODEX_CLI_SEMAPHORE: tuple[int, threading.BoundedSemaphore] | None = None
+_REASONIX_CLI_SEMAPHORE_LOCK = threading.Lock()
+_REASONIX_CLI_SEMAPHORE: tuple[int, threading.BoundedSemaphore] | None = None
 
 
 def env_first(*names: str, default: str = "") -> str:
@@ -65,13 +65,13 @@ def gateway_trace(event: str, **fields: Any) -> None:
     print(json.dumps(record, ensure_ascii=False, sort_keys=True), file=sys.stderr, flush=True)
 
 
-def codex_cli_semaphore() -> threading.BoundedSemaphore:
-    global _CODEX_CLI_SEMAPHORE
+def reasonix_cli_semaphore() -> threading.BoundedSemaphore:
+    global _REASONIX_CLI_SEMAPHORE
     limit = max(1, env_int("CLAUDE_REASONIX_GATEWAY_CODEX_CONCURRENCY", "CLAUDE_CODEX_GATEWAY_CODEX_CONCURRENCY", default=16))
-    with _CODEX_CLI_SEMAPHORE_LOCK:
-        if _CODEX_CLI_SEMAPHORE is None or _CODEX_CLI_SEMAPHORE[0] != limit:
-            _CODEX_CLI_SEMAPHORE = (limit, threading.BoundedSemaphore(limit))
-        return _CODEX_CLI_SEMAPHORE[1]
+    with _REASONIX_CLI_SEMAPHORE_LOCK:
+        if _REASONIX_CLI_SEMAPHORE is None or _REASONIX_CLI_SEMAPHORE[0] != limit:
+            _REASONIX_CLI_SEMAPHORE = (limit, threading.BoundedSemaphore(limit))
+        return _REASONIX_CLI_SEMAPHORE[1]
 
 
 # --- Prefix-prime gate -------------------------------------------------------
@@ -118,7 +118,7 @@ def _evict_oldest(*dicts: dict) -> None:
 # shared prefix periodically, refreshing its LRU recency so it survives the gap
 # between same-codebase workflows. Records the LEADING slice of each lane's prompt
 # (the cacheable shared block) keyed by prefix-family. Off via
-# CLAUDE_CODEX_GATEWAY_KEEPALIVE=0.
+# CLAUDE_REASONIX_GATEWAY_KEEPALIVE=0.
 _KEEPALIVE_LOCK = threading.Lock()
 _KEEPALIVE_PREFIXES: dict[str, tuple[str, float]] = {}
 
@@ -261,11 +261,12 @@ def prefix_prime_key(prompt: str) -> str:
     per-lane data — hashing 32KB split every lane into its own key, so the gate
     never grouped them. A short head (default 8KB) groups lanes that share that
     leading block, so one primer warms it for the rest. Tunable via
-    CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD (falls back to the legacy
-    CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES if set)."""
+    CLAUDE_REASONIX_GATEWAY_PRIME_KEY_HEAD (falls back to CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD,
+    then the legacy CLAUDE_REASONIX_GATEWAY_PRIME_HEAD_BYTES alias if set)."""
     import hashlib
     head = env_int("CLAUDE_REASONIX_GATEWAY_PRIME_KEY_HEAD", "CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD",
-                   "CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES", default=4096)
+                   "CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES",  # legacy alias, CLAUDE_REASONIX_GATEWAY_PRIME_KEY_HEAD preferred
+                   default=4096)
     return hashlib.sha1(prompt[:head].encode("utf-8", "ignore")).hexdigest()[:16]
 
 
@@ -811,7 +812,7 @@ def is_heavy_synthesis(tools: Any, prompt_len: int, prompt_text: str = "") -> bo
     whose intent is genuinely to SYNTHESIZE/merge many items is a 'heavy synthesis'
     lane that flash loops on — route it to the map-reduce skill. The synthesis-intent
     gate keeps the skill OUT of reader lanes (which also have nested schemas + long
-    prompts). Disabled by CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS=0."""
+    prompts). Disabled by CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS=0."""
     if os.getenv("CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS", os.getenv("CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS", "1")).lower() not in {"1", "true", "yes", "on"}:
         return False
     min_len = env_int("CLAUDE_REASONIX_GATEWAY_MAPREDUCE_MIN_PROMPT", "CLAUDE_CODEX_GATEWAY_MAPREDUCE_MIN_PROMPT", default=20000)
@@ -853,7 +854,7 @@ def context_budget_directive() -> str:
     one lane, so the work surfaces for decomposition instead of being silently
     crammed. The real fix for oversized work is finer decomposition at the controller
     (see system-prompt-reasonix.md). Byte-identical across lanes (prefix-stable).
-    Off via CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD=0."""
+    Off via CLAUDE_REASONIX_GATEWAY_CONTEXT_GUARD=0."""
     if os.getenv("CLAUDE_REASONIX_GATEWAY_CONTEXT_GUARD", os.getenv("CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD", "1")).lower() not in {"1", "true", "yes", "on"}:
         return ""
     return (
@@ -923,8 +924,8 @@ def openai_messages_to_prompt(messages: list[JSON], tools: Any = None) -> str:
     if tools and not structured_instruction:
         generic_tools_block = (
             "AVAILABLE CLAUDE CODE TOOL SCHEMAS WERE PROVIDED TO THE MODEL, "
-            "but this Codex-backed gateway executes the worker task directly through Codex CLI. "
-            "Use Codex CLI repository and shell capabilities instead of returning tool calls."
+            "but this Reasonix-backed gateway executes the worker task directly through Reasonix CLI. "
+            "Use Reasonix CLI repository and shell capabilities instead of returning tool calls."
         )
 
     # Emit the leading run of system messages first, then the hoistable generic
@@ -960,7 +961,7 @@ def openai_messages_to_prompt(messages: list[JSON], tools: Any = None) -> str:
         assembled_len = sum(len(p) for p in parts)
         if is_heavy_synthesis(tools, assembled_len, "\n\n".join(parts)):
             parts.append(mapreduce_directive())
-    return "\n\n".join(parts).strip() or "Complete the requested Codex worker task."
+    return "\n\n".join(parts).strip() or "Complete the requested Reasonix worker task."
 
 
 def requested_structured_output_tool(payload: JSON) -> str:
@@ -1242,7 +1243,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     # parse-text->StructuredOutput-tool_use and forced-fallback logic in
     # call_openai_compatible, which is exactly where workflow lanes live or die and
     # which the old text-only MOCK mode skipped entirely. Set
-    # CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT to the text reasonix should "return"
+    # CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT to the text reasonix should "return"
     # (e.g. a JSON object, or prose to test the narrate->fallback path).
     _mock_text = os.getenv("CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT", os.getenv("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT"))
     # The general GATEWAY_MOCK switch must also short-circuit this path: lanes routed
@@ -1277,7 +1278,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     # cache swings 60-94% by collision. Default ephemeral sessions (session:null, no
     # load/append) so each stateless fan-out lane is fully isolated. Requires the
     # one-line dist patch that honors REASONIX_ACP_EPHEMERAL_SESSION; kill-switch:
-    # set CLAUDE_CODEX_GATEWAY_REASONIX_EPHEMERAL=0 to restore stock behavior.
+    # set CLAUDE_REASONIX_GATEWAY_REASONIX_EPHEMERAL=0 to restore stock behavior.
     if env_first("CLAUDE_REASONIX_GATEWAY_REASONIX_EPHEMERAL", "CLAUDE_CODEX_GATEWAY_REASONIX_EPHEMERAL", default="1") not in {"0", "false", "no", "off"}:
         reasonix_env.setdefault("REASONIX_ACP_EPHEMERAL_SESSION", "1")
     _bin_dir = os.path.dirname(os.path.abspath(reasonix_bin)) if os.path.sep in reasonix_bin else ""
@@ -1291,7 +1292,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     timeout = float(env_first("CLAUDE_REASONIX_GATEWAY_CODEX_TIMEOUT", "CLAUDE_CODEX_GATEWAY_CODEX_TIMEOUT", "REASONIX_FLEET_TIMEOUT_SECONDS", default="600"))
     cwd = env_first("CLAUDE_REASONIX_GATEWAY_CODEX_CWD", "CLAUDE_REASONIX_GATEWAY_CODEX_CWD", default=os.getcwd())
     max_attempts = max(1, env_int("CLAUDE_REASONIX_GATEWAY_CODEX_MAX_ATTEMPTS", "CLAUDE_CODEX_GATEWAY_CODEX_MAX_ATTEMPTS", default=3))
-    semaphore = codex_cli_semaphore()
+    semaphore = reasonix_cli_semaphore()
 
     def _attempt() -> tuple[str, JSON]:
         # acp writes per-turn usage+cost to the --transcript JSONL; that is the
@@ -1509,7 +1510,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
             "reasonix_cache_pct": cache,
             "reasonix_claude_equiv_usd": claude_equiv,
         }
-        # Prefix-cache diagnostics (opt-in via CLAUDE_CODEX_GATEWAY_PREFIX_TRACE).
+        # Prefix-cache diagnostics (opt-in via CLAUDE_REASONIX_GATEWAY_PREFIX_TRACE).
         # Logs a rolling sequence of (hash of prompt's first 4k chars, hash of
         # first 32k, full length, cache%) per lane so we can tell post-hoc whether
         # low-cache lanes share a long common prefix with earlier lanes (a
@@ -1616,7 +1617,7 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
     # (measured). So retry ONLY when this lane is NOT part of a prime-gate burst
     # (prime_gate is None => an isolated lane with no same-family waiters): that keeps
     # empty-recovery for single subagent calls while review/fan-out bursts never inject
-    # a cold mid-burst lane. Env CLAUDE_CODEX_GATEWAY_RETRY_EMPTY: "burst" (default) =
+    # a cold mid-burst lane. Env CLAUDE_REASONIX_GATEWAY_RETRY_EMPTY: "burst" (default) =
     # isolated-only; "1"/"all" = always (legacy, re-introduces burst variance);
     # "0"/off = never.
     _re = os.getenv("CLAUDE_REASONIX_GATEWAY_RETRY_EMPTY", os.getenv("CLAUDE_CODEX_GATEWAY_RETRY_EMPTY", "burst")).lower()
@@ -1803,7 +1804,7 @@ class ClientGone(Exception):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-codex-gateway/0.1"
+    server_version = "claude-reasonix-gateway/0.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         if os.getenv("CLAUDE_REASONIX_GATEWAY_QUIET", os.getenv("CLAUDE_CODEX_GATEWAY_QUIET", "1")).lower() in {"1", "true", "yes", "on"}:
@@ -1967,7 +1968,7 @@ class Handler(BaseHTTPRequestHandler):
                 # An idle tick. For the Anthropic lazy path we emit a real
                 # content_block_delta heartbeat (via on_keepalive) so the Claude
                 # Code workflow watchdog sees visible content progress and does not
-                # fire its no-progress interrupt while codex exec is still buffering.
+                # fire its no-progress interrupt while reasonix exec is still buffering.
                 # A bare ": keepalive" SSE comment keeps the socket warm but is
                 # invisible to that watchdog, so it is only the fallback.
                 try:
@@ -2081,7 +2082,7 @@ class Handler(BaseHTTPRequestHandler):
         # carries zero answer and no error — the workflow lane comes back silently
         # empty. Emit an explicit text block so the lane surfaces the problem instead
         # of looking like a clean empty success. Off via
-        # CLAUDE_CODEX_GATEWAY_HOLLOW_GUARD=0.
+        # CLAUDE_REASONIX_GATEWAY_HOLLOW_GUARD=0.
         if emitted_real == 0 and os.getenv("CLAUDE_REASONIX_GATEWAY_HOLLOW_GUARD", os.getenv("CLAUDE_CODEX_GATEWAY_HOLLOW_GUARD", "1")).lower() in {"1", "true", "yes", "on"}:
             self.send_sse_event(
                 "content_block_start",
@@ -2129,7 +2130,7 @@ class Handler(BaseHTTPRequestHandler):
         # The OpenAI /v1/chat/completions lazy path intentionally keeps the bare
         # ": keepalive" comment (no on_keepalive). The deep-research workflow routes
         # through the Anthropic /v1/messages path, which is where the workflow
-        # watchdog heartbeat is required. Revisit if CLAUDE_CODEX_CODEX_BACKEND ever
+        # watchdog heartbeat is required. Revisit if CLAUDE_REASONIX_GATEWAY_BACKEND ever
         # routes workflow subagents through chat/completions.
         try:
             response = self.wait_for_stream_response(producer)
@@ -2237,7 +2238,7 @@ def _keepalive_loop() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Local native-model gateway for claude-codex")
+    parser = argparse.ArgumentParser(description="Local native-model gateway for claude-reasonix")
     parser.add_argument("--host", default=os.getenv("CLAUDE_REASONIX_GATEWAY_HOST", os.getenv("CLAUDE_CODEX_GATEWAY_HOST", "127.0.0.1")))
     parser.add_argument("--port", type=int, default=int(os.getenv("CLAUDE_REASONIX_GATEWAY_PORT", os.getenv("CLAUDE_CODEX_GATEWAY_PORT", "0"))))
     parser.add_argument("--port-file", default="")
@@ -2250,7 +2251,7 @@ def main() -> int:
     actual_port = int(server.server_address[1])
     if args.port_file:
         Path(args.port_file).write_text(str(actual_port), encoding="utf-8")
-    print(f"claude-codex native gateway listening on http://{args.host}:{actual_port}", file=sys.stderr, flush=True)
+    print(f"claude-reasonix native gateway listening on http://{args.host}:{actual_port}", file=sys.stderr, flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

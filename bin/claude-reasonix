@@ -33,27 +33,30 @@ CCR_PROXY_URL=""
 ROUTER_SESSION_RUNTIME_DIR=""
 ROUTER_PREPARED=0
 
-# Codex flavor has been removed. All invocation names run reasonix.
+# The reasonix flavor is the only flavor. All invocation names run reasonix.
+# Export both names: hooks/gateway read CLAUDE_REASONIX_FLAVOR first, CLAUDE_CODEX_
+# FLAVOR as the back-compat fallback for an in-flight session.
+CLAUDE_REASONIX_FLAVOR="reasonix"
 CLAUDE_CODEX_FLAVOR="reasonix"
-export CLAUDE_CODEX_FLAVOR
+export CLAUDE_REASONIX_FLAVOR CLAUDE_CODEX_FLAVOR
 
-if [[ "$CLAUDE_CODEX_FLAVOR" == "reasonix" ]]; then
+if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
   : "${CLAUDE_CODEX_CCR_CODEX_MODEL:=${CLAUDE_REASONIX_CCR_CODEX_MODEL:-claude-reasonix-flash}}"
   : "${CLAUDE_CODEX_SUBAGENT_MODEL:=${CLAUDE_REASONIX_SUBAGENT_MODEL:-claude-reasonix-flash}}"
   : "${ANTHROPIC_CUSTOM_MODEL_OPTION:=claude-reasonix-flash}"
   # The worker agents (--agents) carry a <CCR-SUBAGENT-MODEL> route tag that decides
-  # where each lane actually goes. Both codex and deepseek routes point at
+  # where each lane actually goes. Both reasonix and deepseek routes point at
   # claude-reasonix-flash (the only gateway-served model in reasonix mode).
   : "${CLAUDE_CODEX_CCR_CODEX_ROUTE:=${CLAUDE_REASONIX_CCR_CODEX_ROUTE:-codex-gateway,claude-reasonix-flash}}"
   : "${CLAUDE_CODEX_CCR_DEEPSEEK_ROUTE:=${CLAUDE_REASONIX_CCR_DEEPSEEK_ROUTE:-codex-gateway,claude-reasonix-flash}}"
   # All deepseek-* agent types also run on reasonix-flash.
   : "${CLAUDE_CODEX_CCR_DEEPSEEK_MODEL:=${CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL:-claude-reasonix-flash}}"
   # UltraCode / Dynamic Workflow defaults to NATIVE mode in reasonix flavor: each
-  # agent() lane keeps its codex-*/deepseek-* agentType (a native Claude Code
+  # agent() lane keeps its reasonix-*/deepseek-* agentType (a native Claude Code
   # subagent type) which CCR routes to claude-reasonix-flash — this is what gives
   # the parallel phase fan-out (Foundation/CodeReview/Verify) instead of the
   # serial single-MCP-worker behaviour of "fleet" mode. native_subagents=1 lets
-  # only-codex-fleet.py whitelist those native lanes through. Both are required
+  # only-reasonix-fleet.py whitelist those native lanes through. Both are required
   # for fan-out; without them the workflow falls back to one-MCP-lane-at-a-time.
   : "${CLAUDE_CODEX_WORKFLOW_MODE:=${CLAUDE_REASONIX_WORKFLOW_MODE:-native}}"
   : "${CLAUDE_CODEX_NATIVE_SUBAGENTS:=${CLAUDE_REASONIX_NATIVE_SUBAGENTS:-1}}"
@@ -91,32 +94,32 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
-  claude-codex on [concurrency]   Enable Claude -> Codex fleet mode
-  claude-codex off                Disable fleet mode
-  claude-codex status             Show current mode and default concurrency
-  claude-codex workers <count>    Set default Codex task concurrency
-  claude-codex task <prompt>      Run one Claude task through Codex fleet, then auto-disable
-  claude-codex run [claude args]  Start Claude in Codex Fleet mode
-  claude-codex router [args]      Start explicit Claude Code Router native-subagent mode
-  claude-codex router-login [args] Experimental CCR mode that tries Claude login passthrough
-  claude-codex router-qwen [args] Start CCR mode with local Qwen3.6 as the main model
-  claude-codex [claude args]      Same as run: always Codex Fleet mode
-  claude-codex plain [args]       Start raw Claude without Codex Fleet
-  claude-codex doctor             Validate local bridge files and commands
+  claude-reasonix on [concurrency]   Enable Claude -> Reasonix fleet mode
+  claude-reasonix off                Disable fleet mode
+  claude-reasonix status             Show current mode and default concurrency
+  claude-reasonix workers <count>    Set default Reasonix task concurrency
+  claude-reasonix task <prompt>      Run one Claude task through Reasonix fleet, then auto-disable
+  claude-reasonix run [claude args]  Start Claude in Reasonix Fleet mode
+  claude-reasonix router [args]      Start explicit Claude Code Router native-subagent mode
+  claude-reasonix router-login [args] Experimental CCR mode that tries Claude login passthrough
+  claude-reasonix router-qwen [args] Start CCR mode with local Qwen3.6 as the main model
+  claude-reasonix [claude args]      Same as run: always Reasonix Fleet mode
+  claude-reasonix plain [args]       Start raw Claude without Reasonix Fleet
+  claude-reasonix doctor             Validate local bridge files and commands
 
 Environment overrides:
-  CLAUDE_CODEX_FLEET_DEFAULT_WORKERS=16
-  CLAUDE_CODEX_NATIVE_SUBAGENTS=0
-  CLAUDE_CODEX_NATIVE_SUBAGENTS=1 # experimental native gateway mode
+  CLAUDE_REASONIX_FLEET_DEFAULT_WORKERS=16
+  CLAUDE_REASONIX_NATIVE_SUBAGENTS=0
+  CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 # experimental native gateway mode
   CCR_BIN=ccr
-  CLAUDE_CODEX_CCR_PORT=3456
-  CLAUDE_CODEX_ANTHROPIC_API_KEY=... # preferred for router main Anthropic provider
-  CLAUDE_CODEX_CCR_QWEN_MODEL=qwen36-mlx
-  CLAUDE_CODEX_QWEN_ANTHROPIC_BASE_URL=http://127.0.0.1:14000/v1/messages
+  CLAUDE_REASONIX_CCR_PORT=3456
+  CLAUDE_REASONIX_ANTHROPIC_API_KEY=... # preferred for router main Anthropic provider
+  CLAUDE_REASONIX_CCR_QWEN_MODEL=qwen36-mlx
+  CLAUDE_REASONIX_QWEN_ANTHROPIC_BASE_URL=http://127.0.0.1:14000/v1/messages
 
-The worker count is dynamic. This launcher starts one Codex Fleet MCP server,
-not N static Codex servers. Claude can ask that server to run any number of
-Codex tasks, with this value used only as the default concurrency.
+The worker count is dynamic. This launcher starts one Reasonix Fleet MCP server,
+not N static Reasonix servers. Claude can ask that server to run any number of
+Reasonix tasks, with this value used only as the default concurrency.
 EOF
 }
 
@@ -214,7 +217,7 @@ import sys
 
 path = sys.argv[1]
 default_concurrency = int(sys.argv[2])
-codex_bin = sys.argv[3]
+reasonix_bin = sys.argv[3]
 mcp_server = sys.argv[4]
 runtime_dir = sys.argv[5]
 
@@ -230,7 +233,7 @@ servers = {
         "command": "/usr/bin/env",
         "args": ["python3", mcp_server],
         "env": {
-            "CODEX_BIN": codex_bin,
+            "CODEX_BIN": reasonix_bin,
             "REASONIX_FLEET_DEFAULT_CONCURRENCY": str(default_concurrency),
             "REASONIX_FLEET_MODEL": model,
             "REASONIX_FLEET_REASONING": reasoning,
@@ -239,12 +242,12 @@ servers = {
             "REASONIX_FLEET_SANDBOX": sandbox,
             "REASONIX_FLEET_APPROVAL": approval,
             "REASONIX_FLEET_LOG_DIR": os.path.join(runtime_dir, "logs"),
-            # Flavor + reasonix wiring so the MCP worker runs Reasonix (not codex)
+            # Flavor + reasonix wiring so the MCP worker runs Reasonix via acp
             # in a claude-reasonix session. REASONIX_BIN must be absolute (the MCP
             # is spawned with a stripped PATH that lacks the fnm shim dir).
-            "CLAUDE_CODEX_FLAVOR": os.getenv("CLAUDE_CODEX_FLAVOR", "codex"),
+            "CLAUDE_CODEX_FLAVOR": os.getenv("CLAUDE_REASONIX_FLAVOR", os.getenv("CLAUDE_CODEX_FLAVOR", "reasonix")),
             "REASONIX_BIN": os.getenv("REASONIX_BIN", "reasonix"),
-            "CLAUDE_CODEX_REASONIX_MODEL": os.getenv("CLAUDE_CODEX_REASONIX_MODEL", "deepseek-v4-flash"),
+            "CLAUDE_CODEX_REASONIX_MODEL": os.getenv("CLAUDE_REASONIX_REASONIX_MODEL", os.getenv("CLAUDE_CODEX_REASONIX_MODEL", "deepseek-v4-flash")),
             "CLAUDE_CODEX_REASONIX_COST_LEDGER": os.path.join(runtime_dir, "reasonix-cost.jsonl"),
         },
     }
@@ -265,10 +268,10 @@ import os
 import sys
 
 path = sys.argv[1]
-reasonix_model = os.getenv("CLAUDE_CODEX_NATIVE_REASONIX_MODEL", "claude-reasonix-flash")
+reasonix_model = os.getenv("CLAUDE_REASONIX_NATIVE_REASONIX_MODEL", os.getenv("CLAUDE_CODEX_NATIVE_REASONIX_MODEL", "claude-reasonix-flash"))
 tools = [
     item.strip()
-    for item in os.getenv("CLAUDE_CODEX_NATIVE_AGENT_TOOLS", "Read,Grep,Glob,Bash,Edit,Write,MultiEdit").split(",")
+    for item in os.getenv("CLAUDE_REASONIX_NATIVE_AGENT_TOOLS", os.getenv("CLAUDE_CODEX_NATIVE_AGENT_TOOLS", "Read,Grep,Glob,Bash,Edit,Write,MultiEdit")).split(",")
     if item.strip()
 ]
 
@@ -352,15 +355,15 @@ import os
 import sys
 
 path = sys.argv[1]
-codex_model = os.getenv("CLAUDE_CODEX_CCR_CODEX_MODEL", "claude-reasonix-flash")
-deepseek_model = os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_MODEL", "claude-reasonix-flash")
-qwen_model = os.getenv("CLAUDE_CODEX_CCR_QWEN_MODEL", "qwen36-mlx")
-codex_route = os.getenv("CLAUDE_CODEX_CCR_CODEX_ROUTE", "codex-gateway,claude-reasonix-flash")
-deepseek_route = os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_ROUTE", "codex-gateway,claude-reasonix-flash")
-qwen_route = os.getenv("CLAUDE_CODEX_CCR_QWEN_ROUTE", f"qwen36-local,{qwen_model}")
+reasonix_ccr_model = os.getenv("CLAUDE_REASONIX_CCR_CODEX_MODEL", os.getenv("CLAUDE_CODEX_CCR_CODEX_MODEL", "claude-reasonix-flash"))
+deepseek_model = os.getenv("CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL", os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_MODEL", "claude-reasonix-flash"))
+qwen_model = os.getenv("CLAUDE_REASONIX_CCR_QWEN_MODEL", os.getenv("CLAUDE_CODEX_CCR_QWEN_MODEL", "qwen36-mlx"))
+reasonix_ccr_route = os.getenv("CLAUDE_REASONIX_CCR_CODEX_ROUTE", os.getenv("CLAUDE_CODEX_CCR_CODEX_ROUTE", "codex-gateway,claude-reasonix-flash"))
+deepseek_route = os.getenv("CLAUDE_REASONIX_CCR_DEEPSEEK_ROUTE", os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_ROUTE", "codex-gateway,claude-reasonix-flash"))
+qwen_route = os.getenv("CLAUDE_REASONIX_CCR_QWEN_ROUTE", os.getenv("CLAUDE_CODEX_CCR_QWEN_ROUTE", f"qwen36-local,{qwen_model}"))
 tools = [
     item.strip()
-    for item in os.getenv("CLAUDE_CODEX_NATIVE_AGENT_TOOLS", "Read,Grep,Glob,Bash,Edit,Write,MultiEdit").split(",")
+    for item in os.getenv("CLAUDE_REASONIX_NATIVE_AGENT_TOOLS", os.getenv("CLAUDE_CODEX_NATIVE_AGENT_TOOLS", "Read,Grep,Glob,Bash,Edit,Write,MultiEdit")).split(",")
     if item.strip()
 ]
 
@@ -381,11 +384,11 @@ def agent(description, prompt, model):
     }
 
 
-codex_prompt = with_ccr_tag(
-    codex_route,
+reasonix_ccr_prompt = with_ccr_tag(
+    reasonix_ccr_route,
     (
         "You are a native Claude Code subagent routed by Claude Code Router to "
-        "Codex through the claude-codex local gateway. Do the worker-lane task "
+        "Reasonix through the claude-reasonix local gateway. Do the worker-lane task "
         "directly with the available repository tools. Use fast, decisive "
         "coding-agent behavior, preserve user changes, and return concise "
         "evidence-backed results."
@@ -395,7 +398,7 @@ deepseek_prompt = with_ccr_tag(
     deepseek_route,
     (
         "You are a native Claude Code subagent routed by Claude Code Router to "
-        "DeepSeek through the claude-codex local gateway. Prefer broad "
+        "DeepSeek through the claude-reasonix local gateway. Prefer broad "
         "architectural reasoning, database/API analysis, and deep review. Use "
         "repository tools when needed and keep the final output compact and "
         "actionable."
@@ -414,8 +417,8 @@ qwen_prompt = with_ccr_tag(
 agents = {
     "reasonix-worker": agent(
         "General Reasonix worker for implementation, file analysis, repo search, and focused worker lanes.",
-        codex_prompt,
-        codex_model,
+        reasonix_ccr_prompt,
+        reasonix_ccr_model,
     ),
     # Prefix-cache stability: keep the per-ROUTE base (reasonix/qwen genuinely route
     # to different models) but drop the per-ROLE suffix that used to fork a fresh
@@ -423,18 +426,18 @@ agents = {
     # `description` Claude routes on; same-route lanes now share one prefix.
     "reasonix-security": agent(
         "Reasonix security review worker. Use for security, auth, secrets, permissions, injection, and abuse-case lanes.",
-        codex_prompt,
-        codex_model,
+        reasonix_ccr_prompt,
+        reasonix_ccr_model,
     ),
     "reasonix-reviewer": agent(
         "Reasonix code-review worker. Use for CodeReview lanes, regression checks, architecture/infra review, and independent diff review.",
-        codex_prompt,
-        codex_model,
+        reasonix_ccr_prompt,
+        reasonix_ccr_model,
     ),
     "reasonix-verify": agent(
         "Reasonix verification worker. Use for test, verify, reproduction, and acceptance-criteria lanes.",
-        codex_prompt,
-        codex_model,
+        reasonix_ccr_prompt,
+        reasonix_ccr_model,
     ),
     "qwen-worker": agent(
         "Local Qwen3.6 worker. Use for cheap repo exploration, broad search, first-pass bug hunting, and local reasoning lanes.",
@@ -482,19 +485,19 @@ router_path = Path(sys.argv[2])
 ccr_port = int(sys.argv[3])
 gateway_url = sys.argv[4].rstrip("/")
 
-api_key = os.getenv("CLAUDE_CODEX_CCR_API_KEY", "claude-codex-router")
-main_model = os.getenv("CLAUDE_CODEX_ROUTER_MAIN_MODEL", "claude-opus-4-8")
-qwen_model = os.getenv("CLAUDE_CODEX_CCR_QWEN_MODEL", "qwen36-mlx")
+api_key = os.getenv("CLAUDE_REASONIX_CCR_API_KEY", os.getenv("CLAUDE_CODEX_CCR_API_KEY", "claude-codex-router"))
+main_model = os.getenv("CLAUDE_REASONIX_ROUTER_MAIN_MODEL", os.getenv("CLAUDE_CODEX_ROUTER_MAIN_MODEL", "claude-opus-4-8"))
+qwen_model = os.getenv("CLAUDE_REASONIX_CCR_QWEN_MODEL", os.getenv("CLAUDE_CODEX_CCR_QWEN_MODEL", "qwen36-mlx"))
 qwen_models = [
     item.strip()
-    for item in os.getenv("CLAUDE_CODEX_CCR_QWEN_MODELS", qwen_model).split(",")
+    for item in os.getenv("CLAUDE_REASONIX_CCR_QWEN_MODELS", os.getenv("CLAUDE_CODEX_CCR_QWEN_MODELS", qwen_model)).split(",")
     if item.strip()
 ]
 if qwen_model not in qwen_models:
     qwen_models.insert(0, qwen_model)
 main_provider = "qwen36-local" if main_model in qwen_models else "anthropic"
 anthropic_key = (
-    os.getenv("CLAUDE_CODEX_ANTHROPIC_API_KEY")
+    os.getenv("CLAUDE_REASONIX_ANTHROPIC_API_KEY", os.getenv("CLAUDE_CODEX_ANTHROPIC_API_KEY"))
     or os.getenv("ANTHROPIC_API_KEY")
     or os.getenv("ANTHROPIC_AUTH_TOKEN")
     or "missing-anthropic-api-key"
@@ -513,7 +516,7 @@ if main_provider == "anthropic" and main_model not in anthropic_models:
 providers = [
     {
         "name": "anthropic",
-        "api_base_url": os.getenv("CLAUDE_CODEX_ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages"),
+        "api_base_url": os.getenv("CLAUDE_REASONIX_ANTHROPIC_BASE_URL", os.getenv("CLAUDE_CODEX_ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")),
         "api_key": anthropic_key,
         "models": anthropic_models,
         "transformer": {"use": ["Anthropic"]},
@@ -522,42 +525,42 @@ providers = [
         "name": "codex-gateway",
         "api_base_url": gateway_url + "/v1/chat/completions",
         "api_key": "local-gateway",
-        "models": [os.getenv("CLAUDE_CODEX_CCR_CODEX_MODEL", "claude-reasonix-flash")],
+        "models": [os.getenv("CLAUDE_REASONIX_CCR_CODEX_MODEL", os.getenv("CLAUDE_CODEX_CCR_CODEX_MODEL", "claude-reasonix-flash"))],
     },
     {
         "name": "deepseek-gateway",
         "api_base_url": gateway_url + "/v1/chat/completions",
         "api_key": "local-gateway",
-        "models": [os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_MODEL", "claude-reasonix-flash")],
+        "models": [os.getenv("CLAUDE_REASONIX_CCR_DEEPSEEK_MODEL", os.getenv("CLAUDE_CODEX_CCR_DEEPSEEK_MODEL", "claude-reasonix-flash"))],
     },
     {
         "name": "qwen36-local",
-        "api_base_url": os.getenv("CLAUDE_CODEX_QWEN_ANTHROPIC_BASE_URL", "http://127.0.0.1:14000/v1/messages"),
-        "api_key": os.getenv("CLAUDE_CODEX_QWEN_API_KEY", "sk-local-qwen36"),
+        "api_base_url": os.getenv("CLAUDE_REASONIX_QWEN_ANTHROPIC_BASE_URL", os.getenv("CLAUDE_CODEX_QWEN_ANTHROPIC_BASE_URL", "http://127.0.0.1:14000/v1/messages")),
+        "api_key": os.getenv("CLAUDE_REASONIX_QWEN_API_KEY", os.getenv("CLAUDE_CODEX_QWEN_API_KEY", "sk-local-qwen36")),
         "models": qwen_models,
         "transformer": {"use": ["Anthropic"]},
     },
 ]
 
 config = {
-    "LOG": os.getenv("CLAUDE_CODEX_CCR_LOG", "false").lower() in {"1", "true", "yes", "on"},
-    "HOST": os.getenv("CLAUDE_CODEX_CCR_HOST", "127.0.0.1"),
+    "LOG": os.getenv("CLAUDE_REASONIX_CCR_LOG", os.getenv("CLAUDE_CODEX_CCR_LOG", "false")).lower() in {"1", "true", "yes", "on"},
+    "HOST": os.getenv("CLAUDE_REASONIX_CCR_HOST", os.getenv("CLAUDE_CODEX_CCR_HOST", "127.0.0.1")),
     "PORT": ccr_port,
     "APIKEY": api_key,
-    "API_TIMEOUT_MS": int(os.getenv("CLAUDE_CODEX_CCR_TIMEOUT_MS", "600000")),
+    "API_TIMEOUT_MS": int(os.getenv("CLAUDE_REASONIX_CCR_TIMEOUT_MS", os.getenv("CLAUDE_CODEX_CCR_TIMEOUT_MS", "600000"))),
     "Providers": providers,
     "providers": providers,
     "Router": {
         "default": f"{main_provider},{main_model}",
         "think": f"{main_provider},{main_model}",
         "longContext": f"{main_provider},{main_model}",
-        "longContextThreshold": int(os.getenv("CLAUDE_CODEX_CCR_LONG_CONTEXT_THRESHOLD", "60000")),
+        "longContextThreshold": int(os.getenv("CLAUDE_REASONIX_CCR_LONG_CONTEXT_THRESHOLD", os.getenv("CLAUDE_CODEX_CCR_LONG_CONTEXT_THRESHOLD", "60000"))),
     },
     "CUSTOM_ROUTER_PATH": str(router_path),
 }
 
 # Map each gateway-served model name to its "provider,model" route, derived
-# from the ACTUAL provider definitions above (codex-gateway / deepseek-gateway).
+# from the ACTUAL provider definitions above (the gateway / deepseek providers).
 # In reasonix flavor these models are claude-reasonix-flash, which begins with
 # "claude" and would otherwise fall through to the anthropic fallback below and
 # 401 with an invalid x-api-key. This explicit table routes whatever model the
@@ -573,7 +576,7 @@ router_source = """
 const qwenModels = new Set(__QWEN_MODELS__);
 const gatewayRoutes = __GATEWAY_ROUTES__;
 
-module.exports = async function claudeCodexRouter(req) {
+module.exports = async function claudeReasonixRouter(req) {
   const body = req.body || {};
   const system = Array.isArray(body.system) ? body.system : [];
   const subagentPrompt = system[1] && typeof system[1].text === "string" ? system[1].text : "";
@@ -619,11 +622,11 @@ start_native_gateway() {
   local port_file="$RUNTIME_DIR/gateway.$$.port"
   local log_file="$RUNTIME_DIR/gateway.log"
   local upstream_base="${CLAUDE_REASONIX_GATEWAY_ANTHROPIC_BASE_URL:-${CLAUDE_CODEX_GATEWAY_ANTHROPIC_BASE_URL:-${ANTHROPIC_BASE_URL:-https://api.anthropic.com}}}"
-  local gateway_codex_concurrency="${CLAUDE_REASONIX_GATEWAY_CODEX_CONCURRENCY:-${CLAUDE_CODEX_GATEWAY_CODEX_CONCURRENCY:-$(current_workers)}}"
+  local gateway_concurrency="${CLAUDE_REASONIX_GATEWAY_CODEX_CONCURRENCY:-${CLAUDE_CODEX_GATEWAY_CODEX_CONCURRENCY:-$(current_workers)}}"
   rm -f "$port_file"
 
   CLAUDE_CODEX_GATEWAY_ANTHROPIC_BASE_URL="$upstream_base" \
-    CLAUDE_CODEX_GATEWAY_CODEX_CONCURRENCY="$gateway_codex_concurrency" \
+    CLAUDE_CODEX_GATEWAY_CODEX_CONCURRENCY="$gateway_concurrency" \
     python3 "$GATEWAY_FILE" --host "$host" --port "$port" --port-file "$port_file" >>"$log_file" 2>&1 &
   NATIVE_GATEWAY_PID="$!"
 
@@ -845,14 +848,14 @@ allowed_tools_csv() {
 bridge_prompt() {
   local workers
   workers="$(current_workers)"
-  printf 'This Claude Code session is running Codex Fleet dynamic mode. Use the reasonix_fleet MCP server to dispatch any number of Codex CLI subagents. Default concurrent Codex tasks: %s.\n\n' "$workers"
+  printf 'This Claude Code session is running Reasonix Fleet dynamic mode. Use the reasonix_fleet MCP server to dispatch any number of Reasonix CLI subagents. Default concurrent Reasonix tasks: %s.\n\n' "$workers"
   cat "$PROMPT_FILE"
 }
 
 router_prompt() {
   local workers
   workers="$(current_workers)"
-  printf 'This Claude Code session is running explicit Claude Code Router mode. Ordinary non-subagent work stays in Claude Code and keeps the selected main Claude model. Native codex-* and deepseek-* worker lanes are routed by CCR tags to Codex/DeepSeek aliases. Codex Fleet MCP remains available as fallback with default concurrency %s.\n\n' "$workers"
+  printf 'This Claude Code session is running explicit Claude Code Router mode. Ordinary non-subagent work stays in Claude Code and keeps the selected main Claude model. Native reasonix-* and deepseek-* worker lanes are routed by CCR tags to Reasonix/DeepSeek aliases. Reasonix Fleet MCP remains available as fallback with default concurrency %s.\n\n' "$workers"
   cat "$PROMPT_FILE"
 }
 
@@ -866,7 +869,7 @@ run_claude_with_fleet() {
     exit 1
   }
   [[ -f "$MCP_SERVER_FILE" ]] || {
-    echo "missing Codex Fleet MCP server: $MCP_SERVER_FILE" >&2
+    echo "missing Reasonix Fleet MCP server: $MCP_SERVER_FILE" >&2
     exit 1
   }
   [[ -f "$CCR_PROXY_FILE" ]] || {
@@ -934,7 +937,7 @@ run_claude_with_router() {
     exit 1
   }
   [[ -f "$MCP_SERVER_FILE" ]] || {
-    echo "missing Codex Fleet MCP server: $MCP_SERVER_FILE" >&2
+    echo "missing Reasonix Fleet MCP server: $MCP_SERVER_FILE" >&2
     exit 1
   }
 
@@ -944,15 +947,15 @@ run_claude_with_router() {
     ensure_qwen36_ready
     selected_main_model="${CLAUDE_REASONIX_ROUTER_MAIN_MODEL:-${CLAUDE_CODEX_ROUTER_MAIN_MODEL:-$qwen_main_model}}"
   elif [[ "$router_auth_mode" == "api" && -z "${CLAUDE_REASONIX_ANTHROPIC_API_KEY:-${CLAUDE_CODEX_ANTHROPIC_API_KEY:-}}${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
-    echo "warning: claude-codex router mode needs an Anthropic API key/token for CCR to preserve the main Claude model route" >&2
+    echo "warning: claude-reasonix router mode needs an Anthropic API key/token for CCR to preserve the main Claude model route" >&2
   elif [[ "$router_auth_mode" == "login" ]]; then
-    echo "warning: claude-codex router-login is experimental; it only works if Claude Code sends its login auth to the local gateway" >&2
+    echo "warning: claude-reasonix router-login is experimental; it only works if Claude Code sends its login auth to the local gateway" >&2
   fi
 
   generate_config >/dev/null
   render_settings
   local prompt
-  if [[ "$CLAUDE_CODEX_FLAVOR" == "reasonix" && -f "$INSTALL_HOME/system-prompt-reasonix.md" ]]; then
+  if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" && -f "$INSTALL_HOME/system-prompt-reasonix.md" ]]; then
     prompt="$(cat "$INSTALL_HOME/system-prompt-reasonix.md")"
   else
     prompt="$(router_prompt)"
@@ -1049,7 +1052,7 @@ run_plain_claude() {
 run_task() {
   ensure_dirs
   [[ "$#" -gt 0 ]] || {
-    echo "usage: claude-codex task <prompt or claude -p args>" >&2
+    echo "usage: claude-reasonix task <prompt or claude -p args>" >&2
     exit 2
   }
   rm -f "$ENABLED_FILE"
@@ -1063,7 +1066,7 @@ run_task() {
 
 process_list() {
   if [[ -n "${CLAUDE_REASONIX_PS_FIXTURE:-${CLAUDE_CODEX_PS_FIXTURE:-}}" ]]; then
-    cat "$CLAUDE_CODEX_PS_FIXTURE"
+    cat "${CLAUDE_REASONIX_PS_FIXTURE:-${CLAUDE_CODEX_PS_FIXTURE:-}}"
   else
     ps -axo pid=,command=
   fi
@@ -1126,7 +1129,7 @@ for raw_line in lines:
 
     concurrency_match = (
         re.search(r"default concurrency (\d+)", lowered)
-        or re.search(r"default concurrent codex tasks: (\d+)", lowered)
+        or re.search(r"default concurrent reasonix tasks: (\d+)", lowered)
     )
     if concurrency_match:
         active_concurrency = concurrency_match.group(1)
@@ -1139,23 +1142,23 @@ for raw_line in lines:
     sessions.append(("  " + " ".join(fields), restart_required))
 
 if sessions:
-    print("active claude-codex sessions:")
+    print("active claude-reasonix sessions:")
     for text, _ in sessions:
         print(text)
     if any(restart for _, restart in sessions):
-        print("warning: restart required for stale claude-codex sessions to use the current model/config")
+        print("warning: restart required for stale claude-reasonix sessions to use the current model/config")
 PY
 }
 
 status() {
   ensure_dirs
   if is_enabled; then
-    echo "codex fleet: enabled"
+    echo "reasonix fleet: enabled"
   else
-  echo "codex fleet: disabled"
+  echo "reasonix fleet: disabled"
   fi
   echo "default concurrency: $(current_workers)"
-  echo "gateway codex concurrency: ${CLAUDE_REASONIX_GATEWAY_CODEX_CONCURRENCY:-${CLAUDE_CODEX_GATEWAY_CODEX_CONCURRENCY:-$(current_workers)}}"
+  echo "gateway concurrency: ${CLAUDE_REASONIX_GATEWAY_CODEX_CONCURRENCY:-${CLAUDE_CODEX_GATEWAY_CODEX_CONCURRENCY:-$(current_workers)}}"
   echo "fleet home: $FLEET_HOME"
   echo "install home: $INSTALL_HOME"
   report_active_sessions
@@ -1186,7 +1189,7 @@ doctor() {
   command -v reasonix >/dev/null || { echo "reasonix command not found" >&2; ok=1; }
   report_active_sessions
   if (( ok == 0 )); then
-    echo "codex fleet doctor: ok"
+    echo "reasonix fleet doctor: ok"
   fi
   exit "$ok"
 }
@@ -1219,7 +1222,7 @@ main() {
     workers)
       shift
       [[ "${1:-}" != "" ]] || {
-        echo "usage: claude-codex workers <count>" >&2
+        echo "usage: claude-reasonix workers <count>" >&2
         exit 2
       }
       set_workers "$1"

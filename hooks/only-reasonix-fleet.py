@@ -25,8 +25,8 @@ def flavor() -> str:
 
 
 def payload_mentions_native_agent(payload) -> bool:
-    # reasonix-* are the current agentType names; codex-*/deepseek-* are accepted for
-    # back-compat with an in-flight session whose launcher predates the rename.
+    # reasonix-* are the current agentType names; legacy pre-rename agentTypes (deepseek-*
+    # and the old name prefix) are accepted for back-compat with in-flight sessions.
     for value in iter_strings(payload):
         lowered = value.lower()
         if lowered.startswith(("reasonix-", "codex-", "deepseek-")):
@@ -40,7 +40,7 @@ def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception as exc:
-        print(f"Codex fleet guard blocked tool call: invalid hook JSON ({exc})", file=sys.stderr)
+        print(f"Reasonix fleet guard blocked tool call: invalid hook JSON ({exc})", file=sys.stderr)
         return 2
 
     tool_name = str(payload.get("tool_name") or "")
@@ -61,13 +61,13 @@ def main() -> int:
 
     # Block the native Agent tool in BOTH flavors and push to the reasonix_fleet MCP.
     # The MCP is now flavor-aware: in a reasonix session it runs reasonix acp (not
-    # codex exec), so the subagent runs on Reasonix. We must NOT let the native
+    # reasonix exec), so the subagent runs on Reasonix. We must NOT let the native
     # Agent tool through — it goes through the harness dispatch/classifier which
     # hangs (0 tokens). The MCP is the working escape hatch for both engines.
     shown = tool_name or "<unknown>"
     worker = "run_reasonix_worker" if flavor() != "reasonix" else "run_reasonix_worker (runs Reasonix in this session)"
     print(
-        "Codex Fleet subagent policy blocked Claude native subagent tool "
+        "Reasonix Fleet subagent policy blocked Claude native subagent tool "
         f"{shown}. Use mcp__reasonix_fleet__{worker} or "
         "mcp__reasonix_fleet__run_reasonix_fleet instead.",
         file=sys.stderr,

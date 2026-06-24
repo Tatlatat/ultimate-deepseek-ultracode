@@ -19,8 +19,8 @@ def test_key_groups_lanes_sharing_leading_head():
     # head but diverge later (the real fan-out shape) get the SAME key and the
     # gate can prime once for all of them.
     import os
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_KEY_HEAD", None)
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_HEAD_BYTES", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_PRIME_KEY_HEAD", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_PRIME_HEAD_BYTES", None)
     head = "SHARED HEAD " * 500  # ~6KB common, beyond the 4KB key window
     a = head + "DIMENSION A " + "tail A " * 3000
     b = head + "DIMENSION B " + "tail B " * 3000
@@ -34,13 +34,13 @@ def test_key_groups_lanes_sharing_leading_head():
 
 def test_grace_env_default():
     # The post-open grace setting must exist and default to 1.5.
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_PRIME_GRACE_SECONDS", None)
-    expect(abs(gw.env_float("CLAUDE_CODEX_GATEWAY_PRIME_GRACE_SECONDS", default=4.0) - 4.0) < 1e-9,
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_PRIME_GRACE_SECONDS", None)
+    expect(abs(gw.env_float("CLAUDE_REASONIX_GATEWAY_PRIME_GRACE_SECONDS", default=4.0) - 4.0) < 1e-9,
            "grace default is 4.0")
 
 
 def test_primer_then_waiter_roles():
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_GATE"] = "1"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_GATE"] = "1"
     p = "PRIME ROLE " * 4000
     isp1, g1 = gw.acquire_prime_role(p)
     isp2, g2 = gw.acquire_prime_role(p)
@@ -49,10 +49,10 @@ def test_primer_then_waiter_roles():
 
 
 def test_disabled_passthrough():
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_GATE"] = "0"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_GATE"] = "0"
     isp, g = gw.acquire_prime_role("anything")
     expect(isp is False and g is None, "disabled -> passthrough")
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_GATE"] = "1"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_GATE"] = "1"
 
 
 if __name__ == "__main__":

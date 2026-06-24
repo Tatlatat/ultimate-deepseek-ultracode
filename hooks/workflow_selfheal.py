@@ -129,7 +129,7 @@ def preflight(script: str, mode: str) -> tuple[str, str, dict]:
                     "SELF-HEAL: Reasonix CLI not found in PATH "
                     f"(looked for {os.getenv('REASONIX_BIN', 'reasonix')!r}). "
                     "Reasonix worker lanes will fail. Action: install and log in to "
-                    "the Reasonix CLI (`reasonix login`), then restart claude-codex."
+                    "the Reasonix CLI (`reasonix login`), then restart claude-reasonix."
                 )
     except Exception as exc:  # noqa: BLE001 - fail open, never block the workflow
         report["error"] = repr(exc)

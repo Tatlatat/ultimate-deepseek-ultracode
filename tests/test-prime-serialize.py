@@ -20,7 +20,7 @@ def test_first_n_lanes_serialize_rest_parallel():
     # lane N+1 onward run free. acquire_serial_slot(key, n) returns True if this
     # caller holds a serial slot (must release_serial_slot when done), False if it
     # is past the serial window and may run in parallel.
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_SERIAL"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_SERIAL"] = "3"
     key = "famKEY-serialize"
     # reset state for this key
     gw.reset_prime_state(key)
@@ -31,18 +31,18 @@ def test_first_n_lanes_serialize_rest_parallel():
 
 
 def test_serial_disabled_when_zero():
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_SERIAL"] = "0"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_SERIAL"] = "0"
     key = "famKEY-off"
     gw.reset_prime_state(key)
     slots = [gw.acquire_serial_slot(key) for _ in range(4)]
     expect(all(s is False for s in slots), "serial=0 disables -> all parallel")
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_SERIAL"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_SERIAL"] = "3"
 
 
 def test_serial_lock_is_mutually_exclusive():
     # A serial-slot holder takes the per-key serial lock; the next holder must
     # block until release. We prove the lock exists and serializes.
-    os.environ["CLAUDE_CODEX_GATEWAY_PRIME_SERIAL"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_PRIME_SERIAL"] = "3"
     key = "famKEY-mutex"
     gw.reset_prime_state(key)
     order = []

@@ -15,7 +15,7 @@ def expect(cond, msg):
 
 
 def test_directive_is_lean_without_hard_cap():
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_CONTEXT_GUARD", None)
     d = gw.context_budget_directive()
     # The guard must steer the lane to work targeted (grep/glob, no whole-dir dumps)
     # WITHOUT a hard file cap that would kill a task genuinely needing many files.
@@ -35,18 +35,18 @@ def test_directive_tells_lane_to_flag_oversized_work():
 
 
 def test_disabled_returns_empty():
-    os.environ["CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD"] = "0"
+    os.environ["CLAUDE_REASONIX_GATEWAY_CONTEXT_GUARD"] = "0"
     try:
         expect(gw.context_budget_directive() == "", "kill-switch disables the guard")
     finally:
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_CONTEXT_GUARD", None)
 
 
 def test_guard_is_prefix_stable():
     # The guard text must be identical across calls (lane-invariant) so it can sit at
     # the FRONT of the prompt without breaking the shared DeepSeek prefix.
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_CONTEXT_GUARD", None)
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_MAX_FILE_READS", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_CONTEXT_GUARD", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_MAX_FILE_READS", None)
     a = gw.context_budget_directive()
     b = gw.context_budget_directive()
     expect(a == b, "guard directive is byte-identical across calls")

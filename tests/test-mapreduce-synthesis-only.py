@@ -45,7 +45,7 @@ SYNTH_PROMPT = (
 
 
 def test_reader_lane_does_not_get_mapreduce():
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
     expect(gw.is_synthesis_prompt(READER_PROMPT) is False,
            "a read-files-and-report prompt is NOT synthesis intent")
     expect(gw.is_heavy_synthesis(NESTED_TOOLS, len(READER_PROMPT), READER_PROMPT) is False,
@@ -53,7 +53,7 @@ def test_reader_lane_does_not_get_mapreduce():
 
 
 def test_synthesize_lane_gets_mapreduce():
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
     expect(gw.is_synthesis_prompt(SYNTH_PROMPT) is True,
            "a merge-many-items prompt IS synthesis intent")
     expect(gw.is_heavy_synthesis(NESTED_TOOLS, len(SYNTH_PROMPT), SYNTH_PROMPT) is True,
@@ -69,12 +69,12 @@ def test_short_synthesis_still_skipped():
 
 
 def test_kill_switch_disables():
-    os.environ["CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS"] = "0"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS"] = "0"
     try:
         expect(gw.is_heavy_synthesis(NESTED_TOOLS, len(SYNTH_PROMPT), SYNTH_PROMPT) is False,
                "kill-switch disables map-reduce entirely")
     finally:
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_MAPREDUCE_SYNTHESIS", None)
 
 
 if __name__ == "__main__":

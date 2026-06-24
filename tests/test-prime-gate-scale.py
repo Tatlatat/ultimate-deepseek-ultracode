@@ -36,7 +36,7 @@ SHARED = (
 )
 CONFIG = {
     "provider": "reasonix_cli",
-    "target_model": os.environ.get("CLAUDE_CODEX_REASONIX_MODEL", "deepseek-v4-flash"),
+    "target_model": os.environ.get("CLAUDE_REASONIX_REASONIX_MODEL", "deepseek-v4-flash"),
     "reasonix_bin": os.environ.get(
         "REASONIX_BIN",
         "/Users/tatlatat/.local/state/fnm_multishells/99956_1781810966752/bin/reasonix",
@@ -51,7 +51,7 @@ import tempfile
 # so an empty cwd means no on-disk session to accumulate — this removes the
 # "in_tok grows per lane" confound that came from a cwd holding a prior session.
 _WORKDIR = tempfile.mkdtemp(prefix="primegate-scale-")
-os.environ["CLAUDE_CODEX_GATEWAY_CODEX_CWD"] = _WORKDIR
+os.environ["CLAUDE_REASONIX_GATEWAY_CODEX_CWD"] = _WORKDIR
 
 
 def lane(i: int) -> dict:
@@ -72,7 +72,7 @@ def lane(i: int) -> dict:
 
 def main() -> int:
     print(f"firing {N} concurrent lanes, shared prefix ~{len(SHARED)} chars")
-    print(f"PRIME_GATE={os.environ.get('CLAUDE_CODEX_GATEWAY_PRIME_GATE', '1(default)')}")
+    print(f"PRIME_GATE={os.environ.get('CLAUDE_REASONIX_GATEWAY_PRIME_GATE', '1(default)')}")
     rows = []
     with cf.ThreadPoolExecutor(max_workers=N) as ex:
         futs = [ex.submit(lane, i) for i in range(N)]

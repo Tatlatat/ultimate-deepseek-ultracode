@@ -15,7 +15,7 @@ def expect(cond, msg):
 
 
 def test_counts_increment_per_signature():
-    os.environ["CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAX_LANE_RETRIES"] = "3"
     p = "SAME LANE SIGNATURE " * 600
     c1 = gw.register_lane_attempt(p)
     c2 = gw.register_lane_attempt(p)
@@ -25,7 +25,7 @@ def test_counts_increment_per_signature():
 
 
 def test_force_fallback_after_threshold():
-    os.environ["CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAX_LANE_RETRIES"] = "3"
     p = "LOOPY LANE " * 600
     seen_force = False
     for _ in range(5):
@@ -36,12 +36,12 @@ def test_force_fallback_after_threshold():
 
 
 def test_disabled_when_zero():
-    os.environ["CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES"] = "0"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAX_LANE_RETRIES"] = "0"
     p = "NEVER FORCE " * 600
     for _ in range(10):
         gw.register_lane_attempt(p)
     expect(gw.should_force_fallback(p) is False, "threshold 0 disables loop-breaker")
-    os.environ["CLAUDE_CODEX_GATEWAY_MAX_LANE_RETRIES"] = "3"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MAX_LANE_RETRIES"] = "3"
 
 
 if __name__ == "__main__":

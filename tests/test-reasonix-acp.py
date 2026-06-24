@@ -74,7 +74,7 @@ def test_spawn_failure_raises_gatewayerror():
     raise SystemExit("FAIL: no exception raised — expected GatewayError")
 
 def test_registry_has_reasonix_flash():
-    os.environ["CLAUDE_CODEX_FLAVOR"] = "reasonix"
+    os.environ["CLAUDE_REASONIX_FLAVOR"] = "reasonix"
     try:
         reg = gw.model_registry()
         expect("claude-reasonix-flash" in reg, f"registry missing claude-reasonix-flash: {list(reg)}")
@@ -82,7 +82,7 @@ def test_registry_has_reasonix_flash():
         expect(cfg.get("provider") == "reasonix_cli", f"wrong provider: {cfg}")
         expect(cfg.get("target_model") == "deepseek-v4-flash", f"wrong model: {cfg}")
     finally:
-        os.environ.pop("CLAUDE_CODEX_FLAVOR", None)
+        os.environ.pop("CLAUDE_REASONIX_FLAVOR", None)
 
 def main():
     test_accumulates_text_and_cost()

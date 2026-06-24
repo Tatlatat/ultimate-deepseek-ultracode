@@ -24,7 +24,7 @@ def expect(cond, msg):
 
 
 def _start():
-    os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK", None)
+    os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK", None)
     httpd = gw.ThreadingHTTPServer(("127.0.0.1", 0), gw.Handler)
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -68,7 +68,7 @@ def _has_error(events) -> bool:
 def test_empty_reasonix_reply_is_not_silently_hollow():
     # reasonix returns nothing. A plain (no-tool) lane must NOT come back as a clean
     # empty stream — it must carry a real text block or an explicit error.
-    os.environ["CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT"] = ""
+    os.environ["CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT"] = ""
     httpd, port = _start()
     try:
         events = _stream(port, {
@@ -81,12 +81,12 @@ def test_empty_reasonix_reply_is_not_silently_hollow():
                "empty reasonix reply must surface real content or an error, not a hollow stream")
     finally:
         httpd.shutdown()
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT", None)
 
 
 def test_nonempty_reply_still_streams_its_text():
     # Guard against over-correction: a real answer must still stream through unchanged.
-    os.environ["CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT"] = "here is the real answer"
+    os.environ["CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT"] = "here is the real answer"
     httpd, port = _start()
     try:
         events = _stream(port, {
@@ -97,7 +97,7 @@ def test_nonempty_reply_still_streams_its_text():
         expect(not _has_error(events), "a real answer does not spuriously emit an error")
     finally:
         httpd.shutdown()
-        os.environ.pop("CLAUDE_CODEX_GATEWAY_MOCK_REASONIX_TEXT", None)
+        os.environ.pop("CLAUDE_REASONIX_GATEWAY_MOCK_REASONIX_TEXT", None)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke test for claude-reasonix-flash via the real gateway + real reasonix CLI.
-# OPT-IN ONLY: only runs when CLAUDE_CODEX_REASONIX_E2E=1 (set by the caller or directly).
+# OPT-IN ONLY: only runs when CLAUDE_REASONIX_E2E=1 (set by the caller or directly).
 # Requires reasonix to be logged in. Slow (~10-40s, real DeepSeek call).
 set -euo pipefail
 
@@ -37,9 +37,9 @@ trap cleanup EXIT
 
 # --- Step 2: set env for gateway ----------------------------------------------
 # Gateway needs a writable cwd for reasonix to create files.
-export CLAUDE_CODEX_GATEWAY_CODEX_CWD="$TMPDIR_E2E"
+export CLAUDE_REASONIX_GATEWAY_CODEX_CWD="$TMPDIR_E2E"
 # Expose reasonix flavor so gateway serves claude-reasonix-flash in its registry.
-export CLAUDE_CODEX_FLAVOR=reasonix
+export CLAUDE_REASONIX_FLAVOR=reasonix
 
 # --- Step 3: start gateway on a random port -----------------------------------
 python3 "$GATEWAY" --host 127.0.0.1 --port 0 --port-file "$PORT_FILE" \

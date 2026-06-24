@@ -71,7 +71,7 @@ a directory.** If a lane's prompt would make it read 10+ files, that is 10+ lane
 When you want one subagent (or a few in parallel) OUTSIDE a Dynamic Workflow,
 call the Reasonix worker MCP DIRECTLY as your first action. Do NOT reach for the
 native `Task`/`Agent`/`Explore`/`general-purpose` tools first — they are blocked
-by the Codex Fleet policy hook and waste a round-trip (you'll see a lane finish
+by the Reasonix Fleet policy hook and waste a round-trip (you'll see a lane finish
 with "0 tool uses" then a block message). Skip that. The correct tools:
 
 - **One subagent:** `mcp__reasonix_fleet__run_reasonix_worker` with the task prompt.
@@ -85,6 +85,6 @@ spawn 2 Explore agents" — go straight to the MCP.
 ## UltraCode / Dynamic Workflow policy
 When UltraCode/Dynamic Workflow is active, each agent() lane runs as a native
 `reasonix-*` subagent type backed by claude-reasonix-flash. Do not spawn Claude
-native subagents directly. This mode exposes only Reasonix agents (no codex-*).
+native subagents directly. This mode exposes only Reasonix agents (use reasonix-* types only).
 (Inside a Workflow the `agent()` calls are auto-routed — you do NOT call the MCP
 by hand there; the MCP is only for one-off subagents outside a Workflow.)
