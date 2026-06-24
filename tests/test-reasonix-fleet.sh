@@ -595,9 +595,9 @@ proc = subprocess.run(
 out = json.loads(proc.stdout)
 updated = out["hookSpecificOutput"]["updatedInput"]
 script = updated["script"]
-if "__codexWorkflowAgent" not in script:
+if "__reasonixWorkflowAgent" not in script:
     raise SystemExit("Workflow hook did not inject native Codex wrapper")
-if "await __codexWorkflowAgent('inspect security'" not in script:
+if "await __reasonixWorkflowAgent('inspect security'" not in script:
     raise SystemExit("Workflow hook did not rewrite agent calls")
 if "mcp__reasonix_fleet__run_reasonix_worker" in script:
     raise SystemExit("native Workflow hook should not route through Codex Fleet MCP")
@@ -633,7 +633,7 @@ proc = subprocess.run(
 )
 out = json.loads(proc.stdout)
 script = out["hookSpecificOutput"]["updatedInput"]["script"]
-if "__codexWorkflowAgent" not in script:
+if "__reasonixWorkflowAgent" not in script:
     raise SystemExit("router Workflow hook did not inject Codex wrapper")
 if "reasonix-security" not in script:
     raise SystemExit("router Workflow hook should route security lanes to reasonix-security")

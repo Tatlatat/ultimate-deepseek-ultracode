@@ -2,7 +2,7 @@
 """Tests for hooks/workflow_selfheal.py + the wrapper sentinel it relies on.
 
 Covers the gateway-reachability probe, the reasonix-CLI check, fail-open
-behaviour, and that the JS wrapper honours the __claudeCodexForceCodexOnly
+behaviour, and that the JS wrapper honours the __claudeReasonixForceReasonixOnly
 sentinel. The codex-remap / DEEPSEEK_API_KEY probe has been removed.
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ def test_no_codex_remap_no_key():
     expect(not any(a.get("action") == "remap_deepseek_to_codex" for a in rep["actions"]),
            "remap_deepseek_to_codex action must not appear after codex remap removal")
     # Sentinel NOT injected — script is returned verbatim.
-    expect("__claudeCodexForceCodexOnly" not in new,
+    expect("__claudeReasonixForceReasonixOnly" not in new,
            "sentinel must not be injected when codex remap is absent")
     # Deepseek lane literal survives intact.
     expect("agentType:'deepseek-architecture'" in new or "agentType: 'deepseek-architecture'" in new,
@@ -69,7 +69,7 @@ def test_script_unchanged_no_sentinel():
     new, _ctx, _rep = sh.preflight(SCRIPT, "router")
     expect(new == SCRIPT, f"script must be returned unchanged; diff:\n{new!r}\nvs\n{SCRIPT!r}")
     # Specifically: sentinel is absent.
-    expect("globalThis.__claudeCodexForceCodexOnly" not in new,
+    expect("globalThis.__claudeReasonixForceReasonixOnly" not in new,
            "sentinel must not appear in passthrough script")
     # meta block is still the first line.
     expect(new.lstrip().startswith("export const meta"),
@@ -84,7 +84,7 @@ def test_script_passthrough_with_key_present():
         new, ctx, rep = sh.preflight(SCRIPT, "router")
         expect("deepseek_key" not in rep["checks"],
                "deepseek_key check must be gone even when key is present")
-        expect("__claudeCodexForceCodexOnly" not in new,
+        expect("__claudeReasonixForceReasonixOnly" not in new,
                "sentinel must not appear; remap is gone")
         expect(new.count("'deepseek-architecture'") == 1,
                "deepseek-architecture lane must be preserved exactly once")
@@ -194,10 +194,10 @@ def test_wrapper_honours_sentinel():
         return
     wrapper = cw.wrapper_source_native()
     probe = wrapper + """
-globalThis.__claudeCodexForceCodexOnly = true;
-const off = __claudeCodexNativeAgentType({label:'architecture infra'});
-globalThis.__claudeCodexForceCodexOnly = false;
-const on  = __claudeCodexNativeAgentType({label:'architecture infra'});
+globalThis.__claudeReasonixForceReasonixOnly = true;
+const off = __claudeReasonixNativeAgentType({label:'architecture infra'});
+globalThis.__claudeReasonixForceReasonixOnly = false;
+const on  = __claudeReasonixNativeAgentType({label:'architecture infra'});
 console.log(JSON.stringify({off, on}));
 """
     out = subprocess.run([node, "-e", probe], capture_output=True, text=True)

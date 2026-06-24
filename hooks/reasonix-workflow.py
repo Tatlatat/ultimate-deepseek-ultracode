@@ -11,7 +11,7 @@ except Exception:  # noqa: BLE001 - self-heal is optional; never break rewriting
     _selfheal_preflight = None
 
 
-MARKER = "__codexWorkflowAgent"
+MARKER = "__reasonixWorkflowAgent"
 PREFIX_GUIDE_TEXT = (
     "PROMPT-CACHE NOTE for this Dynamic Workflow: each agent() lane runs on\n"
     "DeepSeek via reasonix, where a cache MISS costs ~50x a hit. To keep lanes\n"
@@ -261,13 +261,13 @@ def wrapper_source_native() -> str:
     return r"""
 // Injected by claude-codex: real Claude Code Workflow remains active, and
 // each workflow worker lane is routed to a native Codex/DeepSeek subagent type.
-const __claudeCodexFlavor = '""" + flavor + r"""'
-const __claudeCodexNativeAgentType = (opts = {}) => {
+const __claudeReasonixFlavor = '""" + flavor + r"""'
+const __claudeReasonixNativeAgentType = (opts = {}) => {
   const explicit = String(opts.agentType || '')
   // Self-heal override: when DEEPSEEK_API_KEY is absent the preflight sets this
   // flag so every lane (including deepseek-routed hints) runs via codex-cli,
   // which needs no key, instead of 401-ing on claude-deepseek-pro.
-  const forceCodexOnly = Boolean(globalThis.__claudeCodexForceCodexOnly)
+  const forceReasonixOnly = Boolean(globalThis.__claudeReasonixForceReasonixOnly)
 
   // NOTE: these agentType NAMES are just labels that must stay in sync with the
   // --agents definitions (launcher) and the only-reasonix-fleet.py whitelist. The
@@ -279,7 +279,7 @@ const __claudeCodexNativeAgentType = (opts = {}) => {
 
   if (explicit.startsWith('reasonix-')) return explicit
   if (explicit.startsWith('codex-')) return explicit
-  if (explicit.startsWith('deepseek-')) return forceCodexOnly ? 'reasonix-worker' : explicit
+  if (explicit.startsWith('deepseek-')) return forceReasonixOnly ? 'reasonix-worker' : explicit
 
   const hint = [opts.label, opts.phase, explicit].filter(Boolean).join(' ').toLowerCase()
   if (hint.includes('security')) return 'reasonix-security'
@@ -290,13 +290,13 @@ const __claudeCodexNativeAgentType = (opts = {}) => {
   // deepseek-architecture / deepseek-deep agentTypes were dropped. Under the
   // force-only sentinel (a degraded session), collapse role-inference to the
   // plain worker so every lane takes the simplest keyless route.
-  if (!forceCodexOnly && (hint.includes('architecture') || hint.includes('infra') || hint.includes('devops'))) return 'reasonix-reviewer'
+  if (!forceReasonixOnly && (hint.includes('architecture') || hint.includes('infra') || hint.includes('devops'))) return 'reasonix-reviewer'
   return 'reasonix-worker'
 }
 
-const __codexWorkflowAgent = async (prompt, opts = {}) => {
+const __reasonixWorkflowAgent = async (prompt, opts = {}) => {
   const nextOpts = { ...(opts || {}) }
-  nextOpts.agentType = __claudeCodexNativeAgentType(nextOpts)
+  nextOpts.agentType = __claudeReasonixNativeAgentType(nextOpts)
   nextOpts.label = String(nextOpts.label || nextOpts.agentType)
   return agent(prompt, nextOpts)
 }
@@ -307,7 +307,7 @@ def wrapper_source_fleet() -> str:
     return r"""
 // Injected by claude-codex: real Claude Code Workflow remains active, but
 // each workflow worker lane is routed through Codex Fleet.
-const __codexWorkflowAgent = async (prompt, opts = {}) => {
+const __reasonixWorkflowAgent = async (prompt, opts = {}) => {
   const originalOpts = opts || {}
   const label = String(originalOpts.label || originalOpts.phase || 'workflow-worker')
   const phaseName = originalOpts.phase ? String(originalOpts.phase) : ''
