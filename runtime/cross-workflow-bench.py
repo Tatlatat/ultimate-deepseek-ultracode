@@ -19,8 +19,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def find_reasonix() -> str:
+    import shutil
+    env = os.getenv("REASONIX_BIN")
+    if env and os.path.exists(env):
+        return env
+    onpath = shutil.which("reasonix")
+    if onpath:
+        return onpath
+    home = os.path.expanduser("~")
+    for p in sorted(glob.glob(f"{home}/.local/state/fnm_multishells/*/bin/reasonix"), reverse=True):
+        if os.path.exists(p):
+            return p
+    return "reasonix"
+
+
 def start_gateway(keepalive: bool):
-    rx = sorted(glob.glob("/Users/tatlatat/.local/state/fnm_multishells/*/bin/reasonix"), reverse=True)[0]
+    rx = find_reasonix()
     env = dict(os.environ)
     env["REASONIX_ACP_EPHEMERAL_SESSION"] = "1"
     env["REASONIX_BIN"] = rx

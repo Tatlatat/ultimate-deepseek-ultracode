@@ -34,10 +34,16 @@ def find_reasonix() -> str:
     env = os.getenv("REASONIX_BIN")
     if env and os.path.exists(env):
         return env
-    import glob
-    for p in sorted(glob.glob("/Users/tatlatat/.local/state/fnm_multishells/*/bin/reasonix"), reverse=True):
-        if os.path.exists(p):
-            return p
+    import glob, shutil
+    onpath = shutil.which("reasonix")
+    if onpath:
+        return onpath
+    home = os.path.expanduser("~")
+    for pat in (f"{home}/.local/state/fnm_multishells/*/bin/reasonix",
+                f"{home}/.local/share/fnm/node-versions/*/installation/bin/reasonix"):
+        for p in sorted(glob.glob(pat), reverse=True):
+            if os.path.exists(p):
+                return p
     return "reasonix"
 
 

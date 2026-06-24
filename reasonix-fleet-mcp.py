@@ -28,7 +28,12 @@ DEFAULT_CONCURRENCY = env_int("REASONIX_FLEET_DEFAULT_CONCURRENCY", 16)
 DEFAULT_TIMEOUT = env_int("REASONIX_FLEET_TIMEOUT_SECONDS", 1800)
 DEFAULT_MAX_OUTPUT = env_int("REASONIX_FLEET_MAX_OUTPUT_CHARS", 8000)
 REASONIX_BIN = os.getenv("REASONIX_BIN", os.getenv("CODEX_BIN", "reasonix"))
-LOG_DIR = Path(os.getenv("REASONIX_FLEET_LOG_DIR", "/Users/tatlatat/.claude/codex-fleet/runtime/logs"))
+# Default the log dir next to this MCP file (the install dir), so the repo carries
+# no machine path; the launcher overrides it via REASONIX_FLEET_LOG_DIR.
+LOG_DIR = Path(os.getenv(
+    "REASONIX_FLEET_LOG_DIR",
+    str(Path(__file__).resolve().parent / "runtime" / "logs"),
+))
 
 
 def fleet_flavor() -> str:

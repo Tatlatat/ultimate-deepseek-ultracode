@@ -293,7 +293,7 @@ def model_registry() -> dict[str, JSON]:
         "claude-reasonix-flash": {
             "display_name": os.getenv("CLAUDE_REASONIX_REASONIX_DISPLAY_NAME", os.getenv("CLAUDE_CODEX_REASONIX_DISPLAY_NAME", "claude-reasonix-flash")),
             "provider": "reasonix_cli",
-            "target_model": env_first("CLAUDE_REASONIX_REASONIX_MODEL", "CLAUDE_REASONIX_REASONIX_MODEL", default="deepseek-v4-flash"),
+            "target_model": env_first("CLAUDE_REASONIX_REASONIX_MODEL", "CLAUDE_CODEX_REASONIX_MODEL", default="deepseek-v4-flash"),
             "reasonix_bin": env_first("REASONIX_BIN", default="reasonix"),
         },
     }

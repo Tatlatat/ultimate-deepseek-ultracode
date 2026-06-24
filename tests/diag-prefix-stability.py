@@ -19,17 +19,17 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 
-REASONIX_BIN = os.environ.get(
-    "REASONIX_BIN",
-    "/Users/tatlatat/.local/state/fnm_multishells/99956_1781810966752/bin/reasonix",
-)
-NODE_DIR = "/Users/tatlatat/.local/share/fnm/node-versions/v24.15.0/installation/bin"
+REASONIX_BIN = os.environ.get("REASONIX_BIN") or shutil.which("reasonix") or "reasonix"
+# Optional: a node dir to prepend to PATH (the gateway needs node alongside reasonix).
+# Defaults empty; set DIAG_NODE_DIR if reasonix's node is not already on PATH.
+NODE_DIR = os.environ.get("DIAG_NODE_DIR", os.path.dirname(REASONIX_BIN) if os.path.sep in REASONIX_BIN else "")
 MODEL = os.environ.get("DIAG_MODEL", "deepseek-chat")
 EFFORT = os.environ.get("DIAG_EFFORT", "low")
 PROMPT = os.environ.get("DIAG_PROMPT", "Reply with exactly the single word: PONG")
