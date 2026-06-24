@@ -167,6 +167,7 @@ try {
     stream: true, // load-bearing: gateway watchdog needs a live producer
     session: undefined, // ephemeral, zero disk, no lane history bleed
     maxIterPerTurn: req.maxIterPerTurn ?? 1,
+    maxOutputTokens: req.maxOutputTokens ?? undefined,
   });
 
   for await (const ev of loop.step(String(req.prompt ?? ""))) {

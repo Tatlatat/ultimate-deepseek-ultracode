@@ -567,6 +567,7 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
                     }, ensure_ascii=False) + "\n")
             except Exception:
                 pass
+        lane_type = classify_lane_type(payload.get("tools"), prompt)
         text, usage = run_reasonix_acp(prompt, config)
         gateway_trace("reasonix_acp_response", model=requested_model,
                       cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
@@ -580,7 +581,7 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
             cwd=env_first("CLAUDE_REASONIX_GATEWAY_CWD", "CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd()),
             model=str(config.get("target_model") or ""),
             claude_equiv=usage.get("reasonix_claude_equiv_usd"),
-            lane_type="unknown",  # Task 2 wires real classification
+            lane_type=lane_type,
         )
         # Dynamic-Workflow agent({schema}) lanes pass a StructuredOutput tool and
         # expect the subagent to RETURN A tool_use, not prose. reasonix/DeepSeek
@@ -783,11 +784,38 @@ _SYNTHESIS_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 # A reader lane is the opposite — it ingests source material rather than merging it.
+# The broad \bread\b alternative at the end acts as a catch-all; classify_lane_type
+# checks edit intent BEFORE read, so "edit and read" → edit, never misclassified here.
 _READER_INTENT_RE = re.compile(
-    r"\b(read (the|these|all)|read:|open the file|inspect the (file|repo|code)|"
-    r"use webfetch|fetch (the|this) (page|url|source)|enumerate|list what'?s in)",
+    r"\b(read (the|these|all|only|just|this|through|file)|read:|open the file|inspect the (file|repo|code)|"
+    r"use webfetch|fetch (the|this) (page|url|source)|enumerate|list what'?s in|\bread\b)",
     re.IGNORECASE,
 )
+
+
+_EDIT_INTENT_RE = re.compile(
+    r"\b(edit|write|create|modify|apply|patch|implement|add|delete|rename|refactor)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_lane_type(tools: Any, prompt_text: str | None) -> str:
+    """Classify a lane as 'synthesize', 'edit', 'read', or 'unknown'.
+
+    Order matters: synthesize is checked first (heavy-synthesis OR synthesis-intent),
+    then edit (checked BEFORE read so 'modify and summarize' → edit, never capped as
+    read), then read, then unknown.
+    """
+    pt = prompt_text or ""
+    if is_heavy_synthesis(tools, len(pt), pt):
+        return "synthesize"
+    if _SYNTHESIS_INTENT_RE.search(pt):
+        return "synthesize"
+    if _EDIT_INTENT_RE.search(pt):
+        return "edit"
+    if _READER_INTENT_RE.search(pt):
+        return "read"
+    return "unknown"
 
 
 def is_synthesis_prompt(prompt_text: str) -> bool:
@@ -1234,7 +1262,7 @@ def summarize_reasonix_cost(ledger_path: str) -> JSON:
     }
 
 
-def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
+def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = None) -> tuple[str, JSON]:
     # TEST HOOK: simulate reasonix's reply WITHOUT spawning the CLI / hitting
     # DeepSeek, so an e2e test can drive the FULL real path — including the
     # parse-text->StructuredOutput-tool_use and forced-fallback logic in
@@ -1327,6 +1355,8 @@ def run_reasonix_acp(prompt: str, config: JSON) -> tuple[str, JSON]:
             "effort": effort,
             "budget": budget,
         }
+        if max_output_tokens is not None:
+            request["maxOutputTokens"] = max_output_tokens
         try:
             proc = subprocess.Popen(
                 [node_bin, shim_path],
@@ -1559,6 +1589,7 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         prompt = openai_messages_to_prompt(normalized, payload.get("tools"))
         register_lane_attempt(prompt)
         record_keepalive_prefix(prompt)
+        lane_type = classify_lane_type(payload.get("tools"), prompt)
         text, usage = run_reasonix_acp(prompt, config)
         gateway_trace("reasonix_acp_openai_response", model=requested_model,
                       cost=usage.get("reasonix_cost_usd"), cache=usage.get("reasonix_cache_pct"))
@@ -1572,7 +1603,7 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
             cwd=env_first("CLAUDE_REASONIX_GATEWAY_CWD", "CLAUDE_CODEX_GATEWAY_CODEX_CWD", default=os.getcwd()),
             model=str(config.get("target_model") or ""),
             claude_equiv=usage.get("reasonix_claude_equiv_usd"),
-            lane_type="unknown",  # Task 2 wires real classification
+            lane_type=lane_type,
         )
         prompt_tokens = int(usage.get("prompt_tokens") or estimate_tokens(prompt))
         completion_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
