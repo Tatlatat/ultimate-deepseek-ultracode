@@ -43,6 +43,16 @@ ledger_window = rwb.ledger_window
 grade = rwb.grade
 start_gateway = rwb.start_gateway  # reused via _start_gateway_with_flags below
 
+# Lever E predictor (hooks/reasonix-workflow.py is hyphenated → load by path). The
+# bench measures PREDICTION PRECISION on the workflow-shaped lane: predict the files
+# the lane references, compare to what it actually referenced. Advisory makes no
+# prompt change, so this is pure measurement on top of an unchanged run.
+_hook_spec = importlib.util.spec_from_file_location(
+    "reasonix_workflow_hook", ROOT / "hooks" / "reasonix-workflow.py")
+_hook = importlib.util.module_from_spec(_hook_spec)
+_hook_spec.loader.exec_module(_hook)
+predict_prefetch_files = _hook.predict_prefetch_files
+
 
 # --- Cost model (owner-relative price units) -----------------------------------
 # Owner split: a cache HIT is the cheap unit (1); an input MISS costs ~51x a hit;
@@ -211,13 +221,27 @@ _LEVER_ENV_MAP: dict[str, str] = {
     # registers read_file_isolated. NOT in DEFAULT_ON until adoption is proven
     # (the model must actually CALL the tool).
     "READ_ISOLATED": "REASONIX_READ_ISOLATED",
+    # Lever E — speculative context PREFETCH (Q7 advisory mode first). The env var
+    # is tri-state (off|advisory|inject), NOT a 1/0 flag — so it carries its VALUE
+    # ('advisory') via _LEVER_VALUES below. Advisory makes NO prompt change: it only
+    # predicts which files the lanes will read and logs precision, so cache/tokens
+    # must be UNCHANGED vs baseline. The only output is the prediction-precision number.
+    "PREFETCH_CONTEXT": "CLAUDE_REASONIX_PREFETCH_CONTEXT",
+}
+
+# Levers whose env var is NOT a 1/0 flag but takes a string VALUE.
+_LEVER_VALUES: dict[str, str] = {
+    "PREFETCH_CONTEXT": "advisory",
 }
 
 
 def _lever_flags(lever_name: str) -> dict[str, str]:
-    """Return the {env_var: "1"} dict for a single lever."""
+    """Return the {env_var: value} dict for a single lever.
+
+    Most levers are on/off (value '1'). A few are tri-state and carry a string
+    VALUE from _LEVER_VALUES (e.g. PREFETCH_CONTEXT -> 'advisory')."""
     env = _LEVER_ENV_MAP.get(lever_name, lever_name)
-    return {env: "1"}
+    return {env: _LEVER_VALUES.get(lever_name, "1")}
 
 
 def build_matrix(levers: list[str]) -> list[dict]:
@@ -376,6 +400,62 @@ def run_c2_twice(json_out: bool = False) -> dict:
     return result
 
 
+def _files_referenced_by_lane(result: dict) -> set:
+    """The files a workflow-shaped lane actually referenced — its ground truth for
+    precision. The bench's workflow lane returns StructuredOutput {summary, file};
+    the `file` field is the file it points at. Resolved to absolute under ROOT."""
+    refs: set = set()
+    ti = result.get("tool_input")
+    if isinstance(ti, dict):
+        for key in ("file", "files", "files_read"):
+            v = ti.get(key)
+            if isinstance(v, str):
+                v = [v]
+            if isinstance(v, list):
+                for f in v:
+                    if not isinstance(f, str) or not f.strip():
+                        continue
+                    p = Path(f)
+                    if not p.is_absolute():
+                        p = ROOT / f
+                    try:
+                        refs.add(str(p.expanduser().resolve()))
+                    except Exception:
+                        pass
+    return refs
+
+
+def _prefetch_precision(out: dict) -> dict:
+    """Measure Lever E prediction PRECISION on the workflow-shaped lane.
+
+    precision = |predicted ∩ actually-referenced| / |predicted|.
+    Returns {predicted, referenced, hit, precision} or None if there is no
+    workflow lane / nothing was predicted (precision undefined on an empty set)."""
+    wf = (out.get("workflow") or [])
+    if not wf:
+        return None
+    # The single workflow lane's prompt is the prediction source (same text the
+    # advisory hook would see). Recover it from the fixed spec.
+    wf_spec = next((s for s in WORKLOAD_SPEC if s["type"] == "workflow"), None)
+    if wf_spec is None:
+        return None
+    predicted = set(predict_prefetch_files(wf_spec["prompt"], str(ROOT)))
+    referenced: set = set()
+    for r in wf:
+        referenced |= _files_referenced_by_lane(r)
+    if not predicted:
+        return {"predicted": [], "referenced": sorted(referenced),
+                "hit": [], "precision": None,
+                "note": "no files predicted (precision undefined)"}
+    hit = predicted & referenced
+    return {
+        "predicted": sorted(predicted),
+        "referenced": sorted(referenced),
+        "hit": sorted(hit),
+        "precision": round(len(hit) / len(predicted), 3),
+    }
+
+
 def run_matrix(configs: list[dict], json_out: bool = False) -> list[dict]:
     """Run each config through a fresh gateway, measure, grade, return + print rows."""
     rows: list[dict] = []
@@ -409,10 +489,31 @@ def run_matrix(configs: list[dict], json_out: bool = False) -> list[dict]:
             "est_cost": round(cost, 1),
             "quality_pass": quality.get("passed"),
         }
+        # Lever E — when PREFETCH_CONTEXT is the config under test (advisory), measure
+        # prediction PRECISION on the workflow-shaped lane. Advisory changes no prompt
+        # byte, so cache/tokens must match baseline — the only new output is precision.
+        if cfg["name"] == "PREFETCH_CONTEXT" or "CLAUDE_REASONIX_PREFETCH_CONTEXT" in (cfg["flags"] or {}):
+            row["prefetch_precision"] = _prefetch_precision(out)
         rows.append(row)
         if not json_out:
             _print_row(row)
+            if row.get("prefetch_precision") is not None:
+                _print_prefetch(row["prefetch_precision"])
     return rows
+
+
+def _print_prefetch(pp: dict) -> None:
+    if pp is None:
+        return
+    prec = pp.get("precision")
+    print("\n  --- Lever E (PREFETCH_CONTEXT, advisory) prediction precision ---")
+    print(f"    predicted  : {pp.get('predicted')}")
+    print(f"    referenced : {pp.get('referenced')}")
+    print(f"    hit        : {pp.get('hit')}")
+    if prec is None:
+        print(f"    precision  : n/a  ({pp.get('note', 'undefined')})")
+    else:
+        print(f"    precision  : {prec}  (predicted ∩ referenced / predicted)")
 
 
 def _ledger_rows(window) -> list[dict]:

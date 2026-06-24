@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
+import time
 from pathlib import Path
 import sys
 
@@ -91,6 +93,130 @@ PREFIX_GUIDE_TEXT = (
     "   accumulation — group same-context work together.\n"
     "This is advisory — correctness first; apply where it doesn't distort the work."
 )
+
+
+# === Lever E — SPECULATIVE CONTEXT PREFETCH (advisory mode first, Q7) ==========
+# Concept: from the workflow script/task text, PREDICT which real files the fan-out
+# lanes will read. Owner Q7: ship ADVISORY mode FIRST — predict + LOG a precision
+# metric (predicted ∩ actually-read / predicted), with ZERO prompt/prefix change
+# (no injection). Only a future 'inject' mode would place file summaries in the
+# shared prefix; that is NOT this task. Advisory is pure measurement: does the
+# prediction work well enough to justify inject later?
+#
+# HARD INVARIANT: advisory (and the inject stub) MUST NOT alter a single prompt or
+# prefix byte. predict_prefetch_files only READS the task text; the advisory log is
+# emitted to a side channel (stderr + a jsonl ledger), never into updatedInput or
+# additionalContext. Zero cache risk.
+_PREFETCH_MAX_FILES = 8
+_PREFETCH_FILE_CAP_BYTES = 32768  # reserved for a future inject mode (summary cap)
+_PREFETCH_TIMEOUT = 20            # reserved for a future inject summarize budget
+
+# A path/filename token: an optional dir prefix + a basename with a known code/doc
+# extension. Deliberately conservative — only tokens that LOOK like real files are
+# considered, then each is confirmed to EXIST under cwd before being predicted.
+_PREFETCH_PATH_RE = re.compile(
+    r"""(?<![\w./-])             # not mid-token
+        (                        # capture the path
+          (?:[\w./-]+/)?         # optional dir segments
+          [\w-]+                 # stem
+          \.(?:py|pyx|pyi|js|mjs|cjs|ts|tsx|jsx|md|json|jsonl|sh|bash|zsh|
+              txt|toml|yaml|yml|cfg|ini|rs|go|java|c|h|cpp|hpp|rb|php|sql|html|css)
+        )
+        (?![\w/])                # not followed by more path chars
+    """,
+    re.VERBOSE,
+)
+
+
+def predict_prefetch_files(task_text: str, cwd: str | None) -> list[str]:
+    """Predict the files a workflow's lanes will read, from the task/script text.
+
+    Returns a BOUNDED (<= _PREFETCH_MAX_FILES) de-duplicated list of ABSOLUTE paths
+    that ACTUALLY EXIST under cwd. Pure regex over the text + a filesystem-exists
+    check — NO grep-symbol fallback (Q7). A token that does not resolve to a real
+    file under cwd is dropped, so a task naming no real file returns [].
+
+    This function NEVER mutates the prompt; the caller logs its output to a side
+    channel in advisory mode.
+    """
+    if not task_text or not cwd:
+        return []
+    try:
+        base = Path(cwd).expanduser().resolve()
+    except Exception:  # noqa: BLE001
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _PREFETCH_PATH_RE.finditer(task_text):
+        token = match.group(1)
+        # Resolve relative to cwd; also try the bare basename anywhere is NOT done —
+        # we only honor the path as written (relative-to-cwd or already absolute),
+        # so the prediction is grounded in the literal reference.
+        candidate = (base / token) if not os.path.isabs(token) else Path(token)
+        try:
+            resolved = candidate.expanduser().resolve()
+        except Exception:  # noqa: BLE001
+            continue
+        if not resolved.is_file():
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+        if len(out) >= _PREFETCH_MAX_FILES:
+            break
+    return out
+
+
+def prefetch_mode() -> str:
+    """off | advisory | inject. Default off (Q7: advisory ships first, then off
+    is the safe default until precision justifies promotion)."""
+    mode = os.getenv("CLAUDE_REASONIX_PREFETCH_CONTEXT", "off").strip().lower()
+    if mode in {"advisory", "inject"}:
+        return mode
+    return "off"
+
+
+def _prefetch_log_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "runtime" / "prefetch-advisory.jsonl"
+
+
+def run_prefetch_advisory(script: str, cwd: str | None) -> list[str]:
+    """ADVISORY MODE side effect only — predict the files the lanes will read and
+    LOG them. Returns the predicted list (for callers/tests). Emits NOTHING into the
+    prompt: it writes to stderr + a jsonl ledger so a later step can compute precision
+    (predicted ∩ actually-read / predicted) against the files the lanes really read.
+
+    'inject' mode is a documented STUB this task: it predicts + logs exactly like
+    advisory but does NOT place anything in the shared prefix (that is a future task).
+    """
+    mode = prefetch_mode()
+    if mode == "off":
+        return []
+    predicted = predict_prefetch_files(script, cwd)
+    record = {
+        "ts": time.time(),
+        "mode": mode,
+        "cwd": cwd,
+        "predicted": predicted,
+        "predicted_count": len(predicted),
+        # inject is a stub: flag that no prefix change was made.
+        "injected": False,
+    }
+    line = json.dumps(record, ensure_ascii=False)
+    # stderr (visible in hook logs) — never stdout, which carries the hook protocol.
+    print(f"reasonix-prefetch[{mode}]: predicted {len(predicted)} files: {predicted}",
+          file=sys.stderr)
+    try:
+        log = _prefetch_log_path()
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception as exc:  # noqa: BLE001 - logging must never break the hook
+        print(f"reasonix-prefetch log skipped: {exc}", file=sys.stderr)
+    return predicted
 
 
 def find_matching_brace(text: str, open_index: int) -> int:
@@ -453,6 +579,16 @@ def main() -> int:
         additional_context = additional_context + "\n\n" + selfheal_context
     if os.getenv("CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE", os.getenv("CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE", "1")).lower() in {"1", "true", "yes", "on"}:
         additional_context = additional_context + "\n\n" + PREFIX_GUIDE_TEXT
+
+    # Lever E — speculative context prefetch, ADVISORY MODE (Q7). Predict + LOG the
+    # files the lanes will read; ZERO prompt change. This runs AFTER updated and
+    # additional_context are fully assembled and MUST NOT mutate either — it only
+    # writes to a side channel (stderr + jsonl) so precision can be measured later.
+    # Fail-open: a prediction/log error never breaks the hook output.
+    try:
+        run_prefetch_advisory(rewritten, payload.get("cwd"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"reasonix-prefetch advisory skipped: {exc}", file=sys.stderr)
 
     print(
         json.dumps(
