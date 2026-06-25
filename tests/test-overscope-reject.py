@@ -26,6 +26,15 @@ def main():
     r = gw.overscope_rejection("audit the entire codebase for bugs", CWD)
     chk(isinstance(r, str) and "decompose" in r.lower(), "ON: 'audit the entire codebase' -> reject string")
     chk(isinstance(gw.overscope_rejection("review all files under src", CWD), str), "ON: 'all files under src' -> reject")
+    # ON: the BARE bulk phrasings (widened regex — the most common 833-file shapes)
+    for bulk in ("audit the codebase", "analyze all the source files",
+                 "look at everything in src/", "go through the whole repo",
+                 "analyze the project for issues"):
+        chk(isinstance(gw.overscope_rejection(bulk, CWD), str), f"ON: bulk '{bulk}' -> reject")
+    # ON: legit narrow lanes must NOT be rejected (false-positive guard)
+    for narrow in ("read src/auth.py and check it", "analyze the auth module in src/auth.py",
+                   "fix the bug in handler.py", "explain the prime gate logic"):
+        chk(gw.overscope_rejection(narrow, CWD) is None, f"ON: narrow '{narrow}' -> None (no false reject)")
     # ON: >N explicit existing files -> rejection (build a prompt naming 11 real files)
     import glob
     many = [os.path.relpath(p, CWD) for p in glob.glob(str(ROOT / "tests" / "test-*.py"))][:11]

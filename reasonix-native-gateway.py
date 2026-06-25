@@ -1511,8 +1511,16 @@ _PREFETCH_PATH_RE = re.compile(
     """, re.VERBOSE)
 
 _OVERSCOPE_BULK_RE = re.compile(
-    r"\b(audit|review|scan|analyze|check|read)\s+(the\s+)?(whole|entire|full)\s+(codebase|repo|repository|project)\b"
-    r"|\ball\s+files?\s+(in|under|across)\b|\bevery\s+file\b|\bthe\s+whole\s+(repo|codebase)\b",
+    # verb + (optional whole/entire/full) + codebase/repo/project — the qualifier is
+    # OPTIONAL so bare "audit the codebase" (the most common 833-file phrasing) fires.
+    r"\b(audit|review|scan|analyze|examine|inspect|check|read|go through|look at)\s+"
+    r"(the\s+)?(whole\s+|entire\s+|full\s+)?(codebase|repo|repository|project)\b"
+    # "all files in/under/across", "all (the) source files", "every file"
+    r"|\ball\s+(the\s+)?(source\s+)?files?\b"
+    r"|\bevery\s+(source\s+)?file\b"
+    # "everything in/under src", "the whole repo/codebase"
+    r"|\beverything\s+(in|under|across)\b"
+    r"|\bthe\s+whole\s+(repo|codebase|repository|project)\b",
     re.I)
 
 
