@@ -22,6 +22,7 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import { resolveOutlineThreshold } from "./lane-opts.mjs";
+import { runHarness } from "./lane-harness.mjs";
 
 // The vendored fork engine is a tsup `noExternal` bundle that interops with a few
 // CJS-only transitive deps (safer-buffer/iconv-lite → `require("buffer")`) via an
@@ -205,14 +206,53 @@ try {
     maxOutputTokens: req.maxOutputTokens ?? undefined,
   });
 
-  for await (const ev of loop.step(String(req.prompt ?? ""))) {
-    if (ev.role === "assistant_final") {
-      text = ev.content ?? "";
-      if (ev.stats) stats = ev.stats;
-    } else if (ev.role === "error") {
-      fail(`run-lane: engine error: ${ev.content || "unknown"}`, 3);
-    } else if (ev.role === "done") {
-      break;
+  const _harnessOn = (process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "1"
+    || (process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "true";
+  const _acceptance = typeof req.acceptanceTest === "string" ? req.acceptanceTest.trim() : "";
+
+  if (_harnessOn && _acceptance) {
+    const { execSync } = await import("node:child_process");
+    const runTest = async () => {
+      try {
+        execSync(_acceptance, { cwd: rootDir, stdio: "pipe", timeout: 120000 });
+        return { ok: true, failCount: 0, errorSig: "" };
+      } catch (e) {
+        const out = String(e.stdout || "") + String(e.stderr || "");
+        const m = out.match(/(\d+)\s+fail/i);            // e.g. bun "N fail"
+        const failCount = m ? parseInt(m[1], 10) : 1;
+        const sig = (out.match(/[A-Za-z][\w./-]*:\d+/) || [out.slice(0, 40)])[0]; // first file:line or head
+        return { ok: false, failCount, errorSig: String(sig) };
+      }
+    };
+    const runAttempt = async (lesson) => {
+      const p = lesson ? `${String(req.prompt ?? "")}\n\nLESSON FROM LAST ATTEMPT (apply it, do not repeat the same edit):\n${lesson}` : String(req.prompt ?? "");
+      // fresh loop per attempt = lesson-only carry (no accumulated history -> no quadratic cost)
+      const attemptLoop = new CacheFirstLoop({
+        client, prefix, tools: toolset.tools, model: req.model, stream: true,
+        session: undefined, maxIterPerTurn: req.maxIterPerTurn ?? 50,
+        maxOutputTokens: req.maxOutputTokens ?? undefined,
+        budgetUsd: typeof req.budgetUsd === "number" ? req.budgetUsd : undefined,
+      });
+      let t = "";
+      for await (const ev of attemptLoop.step(p)) {
+        if (ev.role === "assistant_final") { t = ev.content ?? ""; if (ev.stats) stats = ev.stats; }
+        else if (ev.role === "error") throw new Error(ev.content || "engine error");
+        else if (ev.role === "done") break;
+      }
+      return t;
+    };
+    const _h = await runHarness({ runAttempt, runTest, maxAttempts: req.harnessMaxAttempts ?? 4 });
+    text = `__HARNESS__:${_h.status}:${_h.attempts}:${(_h.lastLesson || "").slice(0, 200)}`;
+  } else {
+    for await (const ev of loop.step(String(req.prompt ?? ""))) {
+      if (ev.role === "assistant_final") {
+        text = ev.content ?? "";
+        if (ev.stats) stats = ev.stats;
+      } else if (ev.role === "error") {
+        fail(`run-lane: engine error: ${ev.content || "unknown"}`, 3);
+      } else if (ev.role === "done") {
+        break;
+      }
     }
   }
 } catch (e) {
