@@ -15,5 +15,8 @@ chk(resolveOutlineThreshold({ REASONIX_LANE_OUTLINE_THRESHOLD_BYTES: "0" }) === 
 chk(resolveOutlineThreshold({ REASONIX_LANE_OUTLINE_THRESHOLD_BYTES: "-5" }) === undefined, "negative -> undefined");
 chk(resolveOutlineThreshold({ REASONIX_LANE_OUTLINE_THRESHOLD_BYTES: "abc" }) === undefined, "non-numeric -> undefined");
 chk(resolveOutlineThreshold({ REASONIX_LANE_OUTLINE_THRESHOLD_BYTES: "32768" }) === 32768, "32768 -> 32768");
+chk(resolveOutlineThreshold({ REASONIX_LANE_OUTLINE_THRESHOLD_BYTES: "32abc" }) === undefined, "32abc -> undefined (strict, reject mixed alphanum)");
+chk(resolveOutlineThreshold({ REASONIX_LANE_OUTLINE_THRESHOLD_BYTES: "32768.5" }) === undefined, "32768.5 -> undefined (strict, reject float)");
+chk(resolveOutlineThreshold({ REASONIX_LANE_OUTLINE_THRESHOLD_BYTES: " 32768 " }) === 32768, " 32768  -> 32768 (strict, trim whitespace)");
 console.log(`\n${p} passed, ${f} failed`);
 process.exit(f ? 1 : 0);
