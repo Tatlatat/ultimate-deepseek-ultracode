@@ -21,6 +21,7 @@
 // history bleed.
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { resolveOutlineThreshold } from "./lane-opts.mjs";
 
 // The vendored fork engine is a tsup `noExternal` bundle that interops with a few
 // CJS-only transitive deps (safer-buffer/iconv-lite → `require("buffer")`) via an
@@ -134,7 +135,9 @@ let text = "";
 let stats = null;
 try {
   // Full code toolset (file/shell/semantic-search) so lanes match the old acp.
-  const toolset = await buildCodeToolset({ rootDir });
+  const _outlineThreshold = resolveOutlineThreshold(process.env);
+  const toolset = await buildCodeToolset(
+    _outlineThreshold !== undefined ? { rootDir, outlineThresholdBytes: _outlineThreshold } : { rootDir });
 
   // --- TEST-ONLY read trace (Lever E ground truth) --------------------------
   // When REASONIX_READ_TRACE_DIR is set, record every ACTUAL file read the lane
