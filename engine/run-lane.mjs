@@ -240,6 +240,8 @@ try {
       // fresh loop per attempt = lesson-only carry (no accumulated history -> no quadratic cost)
       const attemptLoop = new CacheFirstLoop({
         client, prefix, tools: toolset.tools, model: req.model, stream: true,
+        // 50 (not the off-path's 1): a harness lane is a COMPLETE edit+verify sub-task
+        // needing multi-turn tool use; gated, so the off-path default is unaffected.
         session: undefined, maxIterPerTurn: req.maxIterPerTurn ?? 50,
         maxOutputTokens: req.maxOutputTokens ?? undefined,
         budgetUsd: typeof req.budgetUsd === "number" ? req.budgetUsd : undefined,

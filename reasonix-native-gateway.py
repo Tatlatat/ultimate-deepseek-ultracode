@@ -2160,6 +2160,13 @@ def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = 
     # node) so `node` resolves regardless of how the gateway was started. Honor
     # REASONIX_ENGINE_DIST + DeepSeek auth via the child env.
     shim_env = dict(os.environ)
+    # When this lane runs with the harness engaged (gateway flag on + an
+    # ACCEPTANCE_TEST line present), turn ON the shim's harness gate in the child
+    # env so the single gateway flag activates the whole chain (the shim gates its
+    # retry loop on its OWN REASONIX_LANE_HARNESS). Only set when engaged — when the
+    # harness is off this is never touched, so the child env is byte-identical.
+    if harness:
+        shim_env["REASONIX_LANE_HARNESS"] = "1"
     _reasonix_bin = env_first("REASONIX_BIN", default="")
     _bin_dir = os.path.dirname(os.path.abspath(_reasonix_bin)) if (_reasonix_bin and os.path.sep in _reasonix_bin) else ""
     if _bin_dir and os.path.exists(os.path.join(_bin_dir, "node")):
