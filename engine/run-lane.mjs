@@ -63,7 +63,14 @@ function envNum(name, fallback) {
 // MOCK path: deterministic reply with NO DeepSeek call (tests/CI). Values are
 // overridable via env so the gateway-side tests can assert real-ish numbers
 // without spawning the real engine.
-if (process.env.REASONIX_ENGINE_MOCK === "1") {
+// When the harness is engaged (REASONIX_LANE_HARNESS=1 + acceptanceTest present),
+// fall through so the harness loop can drive runAttempt with the mock engine.
+const _harnessEngaged =
+  ((process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "1"
+    || (process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "true")
+  && typeof req.acceptanceTest === "string" && req.acceptanceTest.trim() !== "";
+
+if (process.env.REASONIX_ENGINE_MOCK === "1" && !_harnessEngaged) {
   const text =
     process.env.REASONIX_ENGINE_MOCK_TEXT ??
     `mock reasonix lane for ${String(req.prompt ?? "").slice(0, 40)}`;
@@ -226,6 +233,10 @@ try {
     };
     const runAttempt = async (lesson) => {
       const p = lesson ? `${String(req.prompt ?? "")}\n\nLESSON FROM LAST ATTEMPT (apply it, do not repeat the same edit):\n${lesson}` : String(req.prompt ?? "");
+      if (process.env.REASONIX_ENGINE_MOCK === "1") {
+        // harness e2e: exercise the loop/test/progress-gate without DeepSeek.
+        return process.env.REASONIX_ENGINE_MOCK_TEXT ?? `mock reasonix lane for ${String(req.prompt ?? "").slice(0, 40)}`;
+      }
       // fresh loop per attempt = lesson-only carry (no accumulated history -> no quadratic cost)
       const attemptLoop = new CacheFirstLoop({
         client, prefix, tools: toolset.tools, model: req.model, stream: true,
