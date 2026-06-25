@@ -199,8 +199,23 @@ WORKLOAD_SPEC = build_workload()
 #     best_combo (the union of all default-ON levers) ].
 # Task 1 ships the harness; later tasks add the real lever flag→behavior wiring.
 # DEFAULT_ON lists the levers that the best_combo turns on together.
+#
+# REAL-DEEPSEEK VERDICT (16 F runs + 8 baseline, 2026-06-25): only READ_SUMMARY (A)
+# is promoted. OUTPUT_DISCIPLINE (F) was DROPPED after measuring it end-to-end:
+#   - F's read-lane saving is real but small (read lanes are already terse).
+#   - On FREE-FORM edit lanes (the real workload, NOT the bench's forced-
+#     StructuredOutput edit lane) F's "emit a real diff" directive INCREASES edit
+#     output +43% avg vs baseline (3807→6410, 4712→9657, ...) — it makes the model
+#     emit a usable diff instead of a one-line description, which is correct
+#     behavior but costs MORE output, the opposite of the lever's goal here.
+#   - F also nudged the heavy review lane's bad-lane rate up (3 bad lanes / 16 F runs
+#     vs 0 / 8 baseline) — its extra prompt block pushes the already-tail-latency
+#     review lane over the empty/slow edge ~1% of lanes.
+# Net: F is NOT measured-positive on the real fan-out, so per measure-then-promote
+# it stays OFF. Re-promote only after measuring F on a FREE-FORM edit lane (re-tune
+# the edit cap to that lane's real P95 and confirm net output drops). See
+# docs/.../token-reduction-results.md "Real-DeepSeek correction".
 DEFAULT_ON_LEVERS = [
-    "OUTPUT_DISCIPLINE",
     "READ_SUMMARY",
 ]
 
