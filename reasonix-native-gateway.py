@@ -62,6 +62,24 @@ def env_truthy(*names: str, default: str = "") -> bool:
     return env_first(*names, default=default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _lane_fail_marker_on() -> bool:
+    return env_truthy("CLAUDE_REASONIX_GATEWAY_LANE_FAIL_MARKER",
+                      "CLAUDE_CODEX_GATEWAY_LANE_FAIL_MARKER", default="1")
+
+
+def lane_unverified_reply(reason: str) -> str:
+    """A3: when a lane times out/errors, return a machine-readable marker so a workflow
+    distinguishes 'could not verify' from 'verified=false'. A verify lane that gets this
+    must be treated UNVERIFIED and its finding KEPT, never silently rejected (the
+    level-3.1 bug: a timed-out verify with an empty verdict was counted as 'rejected').
+    Returns '' when the flag is off (caller restores the old bare-error behavior)."""
+    if not _lane_fail_marker_on():
+        return ""
+    return (f"LANE_UNVERIFIED: this lane did not complete ({reason}). "
+            "Treat as UNVERIFIED (could not check), NOT as a false/disproven finding — "
+            "keep the item and re-run with a smaller scope.")
+
+
 # --- Lever D — pre-index (CLAUDE_REASONIX_PREINDEX, default OFF) ----------------
 # Build a semantic index ONCE per codebase so read-exploration lanes can QUERY it
 # via the EXISTING `semantic_search` tool instead of reading raw files. The index
@@ -2129,6 +2147,11 @@ def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = 
                 proc.communicate(timeout=2)
             except Exception:
                 pass
+            _mk = lane_unverified_reply(f"engine shim timed out after {timeout:g}s")
+            if _mk:
+                return _mk, {"input_tokens": 0, "output_tokens": estimate_tokens({"text": _mk}),
+                             "cache_pct": None, "reasonix_cost_usd": 0.0,
+                             "reasonix_cache_pct": None, "reasonix_claude_equiv_usd": None}
             raise GatewayError(504, "reasonix_timeout", f"engine shim timed out after {timeout:g}s")
         if proc.returncode != 0:
             detail = (stderr_text or "").strip()[:500] or f"engine shim exited {proc.returncode}"

@@ -91,6 +91,12 @@ PREFIX_GUIDE_TEXT = (
     "   idle gaps let DeepSeek evict the warm prefix; the win is best-effort high-90s,\n"
     "   not a guaranteed climb to 99.2). Switching to a DIFFERENT codebase resets the\n"
     "   accumulation — group same-context work together.\n"
+    "10. VERIFY-FAIL IS NOT REJECTION — a verify/check lane that returns empty, errors, "
+    "or carries a 'LANE_UNVERIFIED:' marker means the lane COULD NOT verify (e.g. timed "
+    "out), NOT that the finding is false. Default to KEEPING such a finding marked "
+    "'unverified'; never move it to a 'rejected' bucket on an empty/failed verdict. In "
+    "code: treat `!verdict?.confirmed` as rejected ONLY when the verdict actually came "
+    "back with confirmed:false — an absent/empty verdict is UNVERIFIED.\n"
     "This is advisory — correctness first; apply where it doesn't distort the work."
 )
 
