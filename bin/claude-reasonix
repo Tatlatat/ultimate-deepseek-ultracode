@@ -58,6 +58,14 @@ if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
   : "${CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW:=1}"
   export CLAUDE_REASONIX_GATEWAY_READ_SUMMARY CLAUDE_REASONIX_GATEWAY_READER_BROADEN
   export CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW
+  # STABILITY (sub-project A) — A3 marker on by default (strictly safer: a timed-out
+  # lane surfaces UNVERIFIED instead of a bare error). A1a outline-threshold + A2
+  # overscope-reject ship OFF here pending the vatlieu-kho audit measurement (must show
+  # timeouts gone AND token/cache not regressed AND precision held before flipping on).
+  : "${CLAUDE_REASONIX_GATEWAY_LANE_FAIL_MARKER:=1}"
+  : "${CLAUDE_REASONIX_GATEWAY_OVERSCOPE_REJECT:=0}"
+  : "${REASONIX_LANE_OUTLINE_THRESHOLD_BYTES:=0}"
+  export CLAUDE_REASONIX_GATEWAY_LANE_FAIL_MARKER CLAUDE_REASONIX_GATEWAY_OVERSCOPE_REJECT REASONIX_LANE_OUTLINE_THRESHOLD_BYTES
   # The engine is the owner's fork, bundled in-process and driven via the one-shot
   # Node shim engine/run-lane.mjs (NO upstream reasonix subprocess). The gateway
   # spawns that shim as `node`, so `node` must be on the child PATH. The gateway is
