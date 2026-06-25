@@ -65,8 +65,11 @@ for item in \
   cp -f "$SRC/$item" "$INSTALL_HOME/$item"
 done
 cp -f "$SRC/hooks/"*.py "$INSTALL_HOME/hooks/"
-# The one-shot Node shim that drives the in-process engine.
-cp -f "$SRC/engine/run-lane.mjs" "$INSTALL_HOME/engine/run-lane.mjs"
+# The one-shot Node shim + its sibling modules (lane-opts.mjs, etc.) that drive the
+# in-process engine. Copy the WHOLE engine dir, not just run-lane.mjs — run-lane.mjs
+# imports sibling modules (e.g. ./lane-opts.mjs), and copying only run-lane.mjs leaves
+# those imports dangling and breaks every lane at runtime.
+cp -f "$SRC/engine/"*.mjs "$INSTALL_HOME/engine/"
 # The bundled fork engine (self-contained dist + tree-sitter grammars + tokenizer
 # data). This IS the DeepSeek engine — copy it verbatim; no build, no npm install.
 rm -rf "$INSTALL_HOME/vendor/reasonix-engine"
