@@ -976,8 +976,15 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
                                              default=os.getcwd()))
         if _rej is not None:
             return anthropic_end_turn_response(requested_model, None, text=_rej)
+        # Lever A truncation recovery: when A caps THIS read lane (_a_cap set), an empty
+        # result means the model was truncated before answering — retry once at a higher
+        # cap. Gated by CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW (default on when A on).
+        _retry_hollow = (_a_cap is not None) and env_truthy(
+            "CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW",
+            "CLAUDE_CODEX_GATEWAY_READ_RETRY_HOLLOW", default="1")
         text, usage = run_reasonix_acp(
-            prompt, config, max_output_tokens=_max_out)
+            prompt, config, max_output_tokens=_max_out,
+            retry_empty_force=_retry_hollow)
         # Lever C (default off): cache this lane's summary keyed by the file(s) it
         # read so later lanes on the same codebase reuse it (miss->hit). No-op when
         # the flag is off. Best-effort; never breaks the lane.
@@ -1966,7 +1973,31 @@ def summarize_reasonix_cost(ledger_path: str) -> JSON:
     }
 
 
-def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = None) -> tuple[str, JSON]:
+def retry_cap_for_empty(orig_cap: int | None, was_empty: bool, force: bool) -> int | None:
+    """Decide the escalated output cap for an EMPTY-on-truncation retry. Returns the
+    new (higher) cap to retry with, or None = do not retry.
+
+    Root cause (measured, real DeepSeek): an A-capped read lane over a LARGE file
+    spends its small output cap on tool-calls + reasoning + the file outline and gets
+    TRUNCATED before emitting the answer, so the engine returns empty text. Empty rate
+    scales with cap tightness (cap 512 ~50% empty, 1024 ~17%, no cap ~0%). Retrying the
+    SAME cap is pointless (the budget is the cause); retrying at a HIGHER cap gives the
+    model room to finish (verified: recovers 2/2). Only escalates when the lane was
+    actually capped (orig_cap not None) and Lever A asked for this (force)."""
+    if not force or not was_empty or orig_cap is None:
+        return None
+    try:
+        mult = float(os.getenv(
+            "CLAUDE_REASONIX_GATEWAY_READ_RETRY_CAP_MULT",
+            os.getenv("CLAUDE_CODEX_GATEWAY_READ_RETRY_CAP_MULT", "2")))
+    except (TypeError, ValueError):
+        mult = 2.0
+    new_cap = int(orig_cap * mult)
+    return new_cap if new_cap > orig_cap else None
+
+
+def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = None,
+                     retry_empty_force: bool = False) -> tuple[str, JSON]:
     # TEST HOOK: simulate reasonix's reply WITHOUT spawning the CLI / hitting
     # DeepSeek, so an e2e test can drive the FULL real path — including the
     # parse-text->StructuredOutput-tool_use and forced-fallback logic in
@@ -2058,7 +2089,7 @@ def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = 
         if os.path.exists(_vendored):
             shim_env["REASONIX_ENGINE_DIST"] = _vendored
 
-    def _attempt() -> tuple[str, JSON]:
+    def _attempt(cap_override: int | None = None) -> tuple[str, JSON]:
         request = {
             "prompt": prompt,
             "system": system_text,
@@ -2069,8 +2100,10 @@ def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = 
             "effort": effort,
             "budget": budget,
         }
-        if max_output_tokens is not None:
-            request["maxOutputTokens"] = max_output_tokens
+        # cap_override lets the empty-on-truncation retry re-run at a higher cap.
+        _cap = cap_override if cap_override is not None else max_output_tokens
+        if _cap is not None:
+            request["maxOutputTokens"] = _cap
         try:
             proc = subprocess.Popen(
                 [node_bin, shim_path],
@@ -2254,6 +2287,22 @@ def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = 
                 if exc.error_type == "reasonix_timeout":
                     raise
                 continue
+            # Truncation recovery (Lever A): an A-capped read lane can spend its small
+            # cap on tool-calls/reasoning/outline and get truncated before emitting the
+            # answer -> empty text. A SAME-cap retry won't help (the budget is the
+            # cause); re-run ONCE at a higher cap so the model can finish. Distinct from
+            # the generic same-cap empty-retry below; runs even mid-burst (force) because
+            # a lost summary is worse than one extra-budget lane, and recovers 2/2
+            # measured. Only when the lane was actually capped (max_output_tokens set).
+            if (not str(result[0]).strip()):
+                _bigger = retry_cap_for_empty(max_output_tokens, True, retry_empty_force)
+                if _bigger is not None:
+                    gateway_trace("reasonix_acp_uncap_retry", model=model,
+                                  attempt=attempt, new_cap=_bigger)
+                    _r2 = _attempt(cap_override=_bigger)
+                    if str(_r2[0]).strip():
+                        return _r2
+                    last_result = _r2
             if may_retry_empty and not str(result[0]).strip() and attempt < max_attempts:
                 gateway_trace("reasonix_acp_empty_retry", model=model, attempt=attempt)
                 last_result = result
@@ -2328,8 +2377,14 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
                               "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
             }
+        # Lever A truncation recovery (see /v1/messages path): retry an empty A-capped
+        # read lane once at a higher cap. Same flag/gate.
+        _retry_hollow = (_a_cap is not None) and env_truthy(
+            "CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW",
+            "CLAUDE_CODEX_GATEWAY_READ_RETRY_HOLLOW", default="1")
         text, usage = run_reasonix_acp(
-            prompt, config, max_output_tokens=_max_out)
+            prompt, config, max_output_tokens=_max_out,
+            retry_empty_force=_retry_hollow)
         # Lever C (default off): populate the shared read-cache from this lane's
         # summary (see /v1/messages path). No-op when off; best-effort.
         populate_read_cache(prompt, text)
