@@ -70,6 +70,15 @@ cp -f "$SRC/hooks/"*.py "$INSTALL_HOME/hooks/"
 # imports sibling modules (e.g. ./lane-opts.mjs), and copying only run-lane.mjs leaves
 # those imports dangling and breaks every lane at runtime.
 cp -f "$SRC/engine/"*.mjs "$INSTALL_HOME/engine/"
+# The gateway is now a package: reasonix-native-gateway.py is an 11-line shim that
+# does sys.path.insert(dirname) then `from reasonix_gateway import *`. The package
+# MUST land beside the shim at $INSTALL_HOME/reasonix_gateway/ or the import dangles
+# (ModuleNotFoundError). Copy only the .py modules — NOT the runtime ledgers/pycache.
+rm -rf "$INSTALL_HOME/reasonix_gateway"
+mkdir -p "$INSTALL_HOME/reasonix_gateway"
+cp -f "$SRC/reasonix_gateway/"*.py "$INSTALL_HOME/reasonix_gateway/"
+[ -f "$INSTALL_HOME/reasonix_gateway/__init__.py" ] \
+  || die "reasonix_gateway package missing after copy: $INSTALL_HOME/reasonix_gateway/__init__.py"
 # The bundled fork engine (self-contained dist + tree-sitter grammars + tokenizer
 # data). This IS the DeepSeek engine — copy it verbatim; no build, no npm install.
 rm -rf "$INSTALL_HOME/vendor/reasonix-engine"
