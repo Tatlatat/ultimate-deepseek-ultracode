@@ -28,38 +28,13 @@ import urllib.error
 import urllib.request
 from uuid import uuid4
 
+_GATEWAY_DIR = Path(__file__).resolve().parent
+if str(_GATEWAY_DIR) not in sys.path:
+    sys.path.insert(0, str(_GATEWAY_DIR))
+from reasonix_gateway.env import JSON, env_first, env_int, env_float, env_truthy
 
-JSON = dict[str, Any]
 _REASONIX_CLI_SEMAPHORE_LOCK = threading.Lock()
 _REASONIX_CLI_SEMAPHORE: tuple[int, threading.BoundedSemaphore] | None = None
-
-
-def env_first(*names: str, default: str = "") -> str:
-    for name in names:
-        value = os.getenv(name)
-        if value:
-            return value
-    return default
-
-
-def env_int(*names: str, default: int) -> int:
-    raw = env_first(*names, default=str(default))
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
-def env_float(*names: str, default: float) -> float:
-    raw = env_first(*names, default=str(default))
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
-def env_truthy(*names: str, default: str = "") -> bool:
-    return env_first(*names, default=default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _lane_fail_marker_on() -> bool:
