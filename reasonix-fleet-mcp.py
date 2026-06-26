@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+from functools import partial
 import json
 import os
 import sys
@@ -110,12 +111,27 @@ async def run_one_task(task: dict[str, Any], index: int, batch_id: str, max_outp
     # (`node engine/run-lane.mjs`), not upstream `reasonix acp`, so only the model
     # is dispatch-relevant; the legacy reasonix_bin config key is no longer read.
     config = {"target_model": model}
+    # Harness: engage when the gateway flag is on AND the prompt has an ACCEPTANCE_TEST line.
+    # When the flag is unset, _harness stays None and partial(rx, prompt, config, harness=None)
+    # is behaviorally identical to rx(prompt, config) — byte-inert.
+    gw = _reasonix_gateway_module()
+    _harness = None
+    if gw is not None and getattr(gw, "_lane_harness_on", None) and gw._lane_harness_on():
+        _at = gw.lane_acceptance_test([{"role": "user", "content": prompt}])
+        if _at:
+            _harness = {
+                "acceptanceTest": _at,
+                "budgetUsd": gw.env_float("CLAUDE_REASONIX_GATEWAY_LANE_BUDGET_USD",
+                                          "CLAUDE_CODEX_GATEWAY_LANE_BUDGET_USD", default=0.05),
+                "harnessMaxAttempts": gw.env_int("CLAUDE_REASONIX_GATEWAY_LANE_MAX_ATTEMPTS",
+                                                 "CLAUDE_CODEX_GATEWAY_LANE_MAX_ATTEMPTS", default=4),
+            }
     # run_reasonix_acp reads cwd from CLAUDE_REASONIX_GATEWAY_CWD.
     prev_cwd = os.environ.get("CLAUDE_REASONIX_GATEWAY_CWD", os.environ.get("CLAUDE_CODEX_GATEWAY_CODEX_CWD"))
     os.environ["CLAUDE_REASONIX_GATEWAY_CWD"] = cwd_text
     try:
         loop = asyncio.get_running_loop()
-        text, usage = await loop.run_in_executor(None, rx, prompt, config)
+        text, usage = await loop.run_in_executor(None, partial(rx, prompt, config, harness=_harness))
     except Exception as exc:
         return {"index": index, "title": title, "ok": False,
                 "error": f"reasonix acp failed: {exc}",

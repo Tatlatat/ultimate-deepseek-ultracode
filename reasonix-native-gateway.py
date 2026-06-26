@@ -80,6 +80,55 @@ def lane_unverified_reply(reason: str) -> str:
             "keep the item and re-run with a smaller scope.")
 
 
+# --- C3: weak-executor harness helpers (CLAUDE_REASONIX_GATEWAY_LANE_HARNESS, default OFF) ---
+# The shim (engine/run-lane.mjs) runs an acceptance-test retry loop and returns a
+# terse `__HARNESS__:<status>:<attempts>:<lesson>` text.  The gateway parses it into
+# a SHORT structured lane reply (<200 chars) so the Opus orchestrator reviews only
+# failures (ESCALATE marker) and never re-reads raw files — fixing the 97% cache-read
+# blowup.  When the flag is off every path is byte-identical to today.
+
+def _lane_harness_on() -> bool:
+    return env_truthy("CLAUDE_REASONIX_GATEWAY_LANE_HARNESS",
+                      "CLAUDE_CODEX_GATEWAY_LANE_HARNESS", default="0")
+
+
+def parse_harness_result(text: str) -> JSON | None:
+    """Parse the shim's harness summary text `__HARNESS__:<status>:<attempts>:<lesson>`.
+    Returns None for a normal (non-harness) reply so the gateway passes it through
+    unchanged (byte-inert when the harness is off)."""
+    if not isinstance(text, str) or not text.startswith("__HARNESS__:"):
+        return None
+    parts = text.split(":", 3)  # ['__HARNESS__', status, attempts, lesson]
+    if len(parts) < 3:
+        return None
+    try:
+        attempts = int(parts[2])
+    except (TypeError, ValueError):
+        attempts = 0
+    return {"status": parts[1], "attempts": attempts, "lesson": parts[3] if len(parts) > 3 else ""}
+
+
+def harness_lane_reply(parsed: JSON) -> str:
+    """A SHORT structured lane reply for the orchestrator. A passed lane returns a terse
+    OK; a stagnated/exhausted lane carries an ESCALATE marker + the lesson so Opus reviews
+    ONLY the failures (never re-reading raw files — the 97% cache-read fix)."""
+    st = parsed.get("status")
+    att = parsed.get("attempts")
+    if st == "pass":
+        return f"LANE_OK pass: completed in {att} attempt(s), acceptance test green."
+    return (f"LANE_ESCALATE: status={st} after {att} attempt(s). "
+            f"Could not finish; orchestrator should take over this lane. Lesson: {parsed.get('lesson','')}")
+
+
+def lane_acceptance_test(messages: Any) -> str:
+    txt = lane_task_text(messages)
+    for line in txt.splitlines():
+        s = line.strip()
+        if s.upper().startswith("ACCEPTANCE_TEST:"):
+            return s.split(":", 1)[1].strip()
+    return ""
+
+
 # --- Lever D — pre-index (CLAUDE_REASONIX_PREINDEX, default OFF) ----------------
 # Build a semantic index ONCE per codebase so read-exploration lanes can QUERY it
 # via the EXISTING `semantic_search` tool instead of reading raw files. The index
@@ -1000,9 +1049,27 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
         _retry_hollow = (_a_cap is not None) and env_truthy(
             "CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW",
             "CLAUDE_CODEX_GATEWAY_READ_RETRY_HOLLOW", default="1")
+        # C3: build harness dict gated by flag (default off -> _harness stays None
+        # -> run_reasonix_acp gets harness=None -> request dict byte-identical).
+        _harness = None
+        if _lane_harness_on():
+            _at = lane_acceptance_test(messages)
+            if _at:
+                _harness = {
+                    "acceptanceTest": _at,
+                    "budgetUsd": env_float("CLAUDE_REASONIX_GATEWAY_LANE_BUDGET_USD",
+                                          "CLAUDE_CODEX_GATEWAY_LANE_BUDGET_USD", default=0.05),
+                    "harnessMaxAttempts": env_int("CLAUDE_REASONIX_GATEWAY_LANE_MAX_ATTEMPTS",
+                                                  "CLAUDE_CODEX_GATEWAY_LANE_MAX_ATTEMPTS", default=4),
+                }
         text, usage = run_reasonix_acp(
             prompt, config, max_output_tokens=_max_out,
-            retry_empty_force=_retry_hollow)
+            retry_empty_force=_retry_hollow, harness=_harness)
+        # C3: fold harness reply BEFORE populate_read_cache / ledger so the short
+        # structured reply (not raw shim text) flows onward.
+        _hp = parse_harness_result(text)
+        if _hp is not None:
+            text = harness_lane_reply(_hp)
         # Lever C (default off): cache this lane's summary keyed by the file(s) it
         # read so later lanes on the same codebase reuse it (miss->hit). No-op when
         # the flag is off. Best-effort; never breaks the lane.
@@ -1273,8 +1340,14 @@ def classify_lane_type(tools: Any, prompt_text: str | None) -> str:
     Order matters: synthesize is checked first (heavy-synthesis OR synthesis-intent),
     then edit (checked BEFORE read so 'modify and summarize' → edit, never capped as
     read), then read, then unknown.
+
+    The gateway-injected PREFIX_GUIDE cache-advice is stripped first (see
+    _strip_injected_guide): its prose carries edit-verbs ("build ONE fixed shared
+    block", "crams everything") that would otherwise flip a read lane to 'edit' and
+    silently disable Lever A's read-summary cap. Classify the lane's TASK, not the
+    advice. No-op (byte-identical) when no guide marker is present.
     """
-    pt = prompt_text or ""
+    pt = _strip_injected_guide(prompt_text or "")
     if is_heavy_synthesis(tools, len(pt), pt):
         return "synthesize"
     if _SYNTHESIS_INTENT_RE.search(pt):
@@ -1587,13 +1660,48 @@ def lane_file_scope_count(task_text: str, cwd: str | None) -> int:
     return len(seen)
 
 
+# Stable opening marker of the gateway-injected PREFIX_GUIDE advisory (hooks/
+# reasonix-workflow.py PREFIX_GUIDE_TEXT) and its closing sentence. The guide is
+# CACHE ADVICE appended to a Workflow's additionalContext — it is NOT the lane's
+# task, but it contains scope words ("the full text of every file under review",
+# "crams everything into one context") that would otherwise trip the bulk-scope
+# classifier and reject EVERY lane. Scope classification must run on the real task,
+# so we strip this contiguous advisory block before classifying.
+_GUIDE_OPEN_MARKER = "PROMPT-CACHE NOTE for this Dynamic Workflow:"
+_GUIDE_CLOSE_MARKER = "This is advisory — correctness first"
+
+
+def _strip_injected_guide(text: str) -> str:
+    """Remove the gateway-injected PREFIX_GUIDE advisory block from `text` so scope
+    classification keys off the lane's actual task, not the cache-advice. The guide is
+    a contiguous block from `_GUIDE_OPEN_MARKER` to the end of its closing sentence;
+    the real task text comes before and/or after it. If the open marker is absent this
+    is a no-op (byte-identical), so non-workflow lanes are unaffected."""
+    if not text or _GUIDE_OPEN_MARKER not in text:
+        return text
+    start = text.find(_GUIDE_OPEN_MARKER)
+    close = text.find(_GUIDE_CLOSE_MARKER, start)
+    if close != -1:
+        # cut through the end of the closing sentence (to the next newline or EOS)
+        eol = text.find("\n", close)
+        end = len(text) if eol == -1 else eol
+    else:
+        # closer missing (truncated guide) — drop to end of text; the guide is always
+        # appended LAST, so everything from the marker on is advisory.
+        end = len(text)
+    return (text[:start] + text[end:]).strip()
+
+
 def overscope_rejection(task_text: str, cwd: str | None) -> str | None:
     """None unless OVERSCOPE_REJECT is on AND the lane is over-broad (a bulk
     non-enumerable scope phrase, OR > max-files distinct named files). When it fires,
     returns a structured error telling the controller to decompose into per-file lanes."""
     if not _overscope_on():
         return None
-    pt = task_text or ""
+    # Classify the LANE TASK, not the gateway-injected cache-advice (see
+    # _strip_injected_guide): the guide's "every file under review" / "everything in
+    # one context" phrases would otherwise reject every lane as bulk scope.
+    pt = _strip_injected_guide(task_text or "")
     bulk = bool(_OVERSCOPE_BULK_RE.search(pt))
     n = lane_file_scope_count(pt, cwd)
     if not bulk and n <= _overscope_max_files():
@@ -2015,7 +2123,7 @@ def retry_cap_for_empty(orig_cap: int | None, was_empty: bool, force: bool) -> i
 
 
 def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = None,
-                     retry_empty_force: bool = False) -> tuple[str, JSON]:
+                     retry_empty_force: bool = False, harness: JSON | None = None) -> tuple[str, JSON]:
     # TEST HOOK: simulate reasonix's reply WITHOUT spawning the CLI / hitting
     # DeepSeek, so an e2e test can drive the FULL real path — including the
     # parse-text->StructuredOutput-tool_use and forced-fallback logic in
@@ -2093,6 +2201,13 @@ def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = 
     # node) so `node` resolves regardless of how the gateway was started. Honor
     # REASONIX_ENGINE_DIST + DeepSeek auth via the child env.
     shim_env = dict(os.environ)
+    # When this lane runs with the harness engaged (gateway flag on + an
+    # ACCEPTANCE_TEST line present), turn ON the shim's harness gate in the child
+    # env so the single gateway flag activates the whole chain (the shim gates its
+    # retry loop on its OWN REASONIX_LANE_HARNESS). Only set when engaged — when the
+    # harness is off this is never touched, so the child env is byte-identical.
+    if harness:
+        shim_env["REASONIX_LANE_HARNESS"] = "1"
     _reasonix_bin = env_first("REASONIX_BIN", default="")
     _bin_dir = os.path.dirname(os.path.abspath(_reasonix_bin)) if (_reasonix_bin and os.path.sep in _reasonix_bin) else ""
     if _bin_dir and os.path.exists(os.path.join(_bin_dir, "node")):
@@ -2118,6 +2233,13 @@ def run_reasonix_acp(prompt: str, config: JSON, max_output_tokens: int | None = 
             "effort": effort,
             "budget": budget,
         }
+        # C3: forward harness fields to the shim ONLY when harness is provided.
+        # When harness is None (default, flag off) the request dict above is
+        # byte-identical to the pre-harness baseline — byte-inert guarantee.
+        if harness:
+            request["acceptanceTest"] = harness["acceptanceTest"]
+            request["budgetUsd"] = harness["budgetUsd"]
+            request["harnessMaxAttempts"] = harness["harnessMaxAttempts"]
         # cap_override lets the empty-on-truncation retry re-run at a higher cap.
         # Sentinel: cap_override==0 means EXPLICITLY uncapped (omit maxOutputTokens);
         # None means "use the lane's original cap".
@@ -2423,9 +2545,25 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         _retry_hollow = (_a_cap is not None) and env_truthy(
             "CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW",
             "CLAUDE_CODEX_GATEWAY_READ_RETRY_HOLLOW", default="1")
+        # C3: symmetric with /v1/messages path (flag off -> byte-identical).
+        _harness = None
+        if _lane_harness_on():
+            _at = lane_acceptance_test(normalized)
+            if _at:
+                _harness = {
+                    "acceptanceTest": _at,
+                    "budgetUsd": env_float("CLAUDE_REASONIX_GATEWAY_LANE_BUDGET_USD",
+                                          "CLAUDE_CODEX_GATEWAY_LANE_BUDGET_USD", default=0.05),
+                    "harnessMaxAttempts": env_int("CLAUDE_REASONIX_GATEWAY_LANE_MAX_ATTEMPTS",
+                                                  "CLAUDE_CODEX_GATEWAY_LANE_MAX_ATTEMPTS", default=4),
+                }
         text, usage = run_reasonix_acp(
             prompt, config, max_output_tokens=_max_out,
-            retry_empty_force=_retry_hollow)
+            retry_empty_force=_retry_hollow, harness=_harness)
+        # C3: fold harness reply BEFORE populate_read_cache / ledger.
+        _hp = parse_harness_result(text)
+        if _hp is not None:
+            text = harness_lane_reply(_hp)
         # Lever C (default off): populate the shared read-cache from this lane's
         # summary (see /v1/messages path). No-op when off; best-effort.
         populate_read_cache(prompt, text)

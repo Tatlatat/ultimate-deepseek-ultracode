@@ -97,6 +97,16 @@ PREFIX_GUIDE_TEXT = (
     "'unverified'; never move it to a 'rejected' bucket on an empty/failed verdict. In "
     "code: treat `!verdict?.confirmed` as rejected ONLY when the verdict actually came "
     "back with confirmed:false — an absent/empty verdict is UNVERIFIED.\n"
+    "11. HARD-TASK HARNESS — when a lane must EDIT code and pass tests (a real refactor/"
+    "fix, not a read), make each lane a COMPLETE sub-task (it drafts + edits + verifies, "
+    "not just drafts), and hand it an INSTANCE-LEVEL spec: a 1-2 sentence plan + the EXACT "
+    "files it touches + one line `ACCEPTANCE_TEST: <shell command>` (e.g. "
+    "`ACCEPTANCE_TEST: bun test path/x.test.ts`). The lane harness runs that command, and "
+    "on failure makes the lane retry with a short lesson until the test passes or it "
+    "stalls (then it returns LANE_ESCALATE for you to take over). Do NOT dump repo "
+    "structure, file summaries, or few-shot examples into a lane — measured to HURT a weak "
+    "executor (instance-level plan+files+test is what helps). Review the SHORT lane results "
+    "(LANE_OK / LANE_ESCALATE); only take over the LANE_ESCALATE lanes yourself.\n"
     "This is advisory — correctness first; apply where it doesn't distort the work."
 )
 
