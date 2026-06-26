@@ -41,9 +41,12 @@ cd claude-reasonix-fleet
 `install.sh` is idempotent — re-run it any time. It:
 
 1. checks the requirements above,
-2. copies the fleet **and the bundled fork engine** into `~/.claude/reasonix-fleet`,
-3. installs the launcher to `~/.local/bin/claude-reasonix` (warns if that dir is not on PATH),
-4. smoke-checks the install with the launcher's own `doctor` (node + bundled engine + auth).
+2. **prompts for your DeepSeek API key** if you don't have one yet (get one at
+   <https://platform.deepseek.com/api_keys>) and saves it to `~/.reasonix/config.json` —
+   or set `DEEPSEEK_API_KEY` in your env beforehand to skip the prompt,
+3. copies the fleet **and the bundled fork engine** into `~/.claude/reasonix-fleet`,
+4. installs the launcher to `~/.local/bin/claude-reasonix` (warns if that dir is not on PATH),
+5. smoke-checks the install with the launcher's own `doctor` (node + bundled engine + auth).
 
 If `~/.local/bin` is not on your PATH, add `export PATH="$HOME/.local/bin:$PATH"` to your
 shell rc and restart your shell.
