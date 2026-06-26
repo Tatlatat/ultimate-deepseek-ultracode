@@ -38,3 +38,18 @@ from .levers import (
     _overscope_on, _overscope_max_files, lane_file_scope_count,
     _strip_injected_guide, _bulk_scope_match, overscope_rejection,
 )
+from .engine_seam import (
+    GatewayError,
+    anthropic_system_to_text, anthropic_messages_to_openai,
+    anthropic_tools_to_openai, anthropic_tool_choice_to_openai,
+    openai_response_to_anthropic, estimate_tokens,
+    provider_chat_payload, call_openai_compatible,
+    fallback_value_from_schema, structured_timeout_fallback,
+    structured_output_prompt_instruction, _tool_choice_forces,
+    openai_messages_to_prompt, requested_structured_output_tool,
+    tool_name_from_schema, tool_names_from_payload,
+    structured_output_success_text, anthropic_has_successful_structured_output,
+    parse_json_object_from_text, anthropic_tool_use_response,
+    anthropic_end_turn_response, retry_cap_for_empty,
+    run_reasonix_acp, call_openai_chat_completion,
+)
