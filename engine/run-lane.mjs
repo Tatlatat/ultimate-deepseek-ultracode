@@ -21,6 +21,8 @@
 // history bleed.
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { resolveOutlineThreshold } from "./lane-opts.mjs";
+import { runHarness } from "./lane-harness.mjs";
 
 // The vendored fork engine is a tsup `noExternal` bundle that interops with a few
 // CJS-only transitive deps (safer-buffer/iconv-lite → `require("buffer")`) via an
@@ -61,7 +63,14 @@ function envNum(name, fallback) {
 // MOCK path: deterministic reply with NO DeepSeek call (tests/CI). Values are
 // overridable via env so the gateway-side tests can assert real-ish numbers
 // without spawning the real engine.
-if (process.env.REASONIX_ENGINE_MOCK === "1") {
+// When the harness is engaged (REASONIX_LANE_HARNESS=1 + acceptanceTest present),
+// fall through so the harness loop can drive runAttempt with the mock engine.
+const _harnessEngaged =
+  ((process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "1"
+    || (process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "true")
+  && typeof req.acceptanceTest === "string" && req.acceptanceTest.trim() !== "";
+
+if (process.env.REASONIX_ENGINE_MOCK === "1" && !_harnessEngaged) {
   const text =
     process.env.REASONIX_ENGINE_MOCK_TEXT ??
     `mock reasonix lane for ${String(req.prompt ?? "").slice(0, 40)}`;
@@ -125,7 +134,15 @@ if (typeof loadEndpoint === "function") {
     /* fall through to env-only */
   }
 }
-const apiKey = process.env.DEEPSEEK_API_KEY || endpoint.apiKey;
+// In MOCK mode the engine never calls DeepSeek (every path mock-returns), but the
+// DeepSeekClient constructor still throws if no key is resolvable. On a clean CI
+// runner (no DEEPSEEK_API_KEY, no ~/.reasonix/config.json) that would break the
+// mock-engine tests that drive the harness path. So when MOCK is on and no real key
+// exists, hand the client a placeholder so it CONSTRUCTS — it is never used for a
+// request. This only affects the mock path; with a real key it is byte-identical.
+const _mockNoKey = process.env.REASONIX_ENGINE_MOCK === "1"
+  && !(process.env.DEEPSEEK_API_KEY || endpoint.apiKey);
+const apiKey = process.env.DEEPSEEK_API_KEY || endpoint.apiKey || (_mockNoKey ? "mock-no-network" : undefined);
 const baseUrl = process.env.DEEPSEEK_BASE_URL || endpoint.baseUrl;
 
 const rootDir = req.rootDir || process.cwd();
@@ -134,7 +151,41 @@ let text = "";
 let stats = null;
 try {
   // Full code toolset (file/shell/semantic-search) so lanes match the old acp.
-  const toolset = await buildCodeToolset({ rootDir });
+  const _outlineThreshold = resolveOutlineThreshold(process.env);
+  const toolset = await buildCodeToolset(
+    _outlineThreshold !== undefined ? { rootDir, outlineThresholdBytes: _outlineThreshold } : { rootDir });
+
+  // --- TEST-ONLY read trace (Lever E ground truth) --------------------------
+  // When REASONIX_READ_TRACE_DIR is set, record every ACTUAL file read the lane
+  // performs to a PER-PROCESS sidecar (reads-<pid>.jsonl in that dir), one resolved
+  // path per line. Per-process because each fan-out lane is a fresh shim subprocess,
+  // so PID is a unique lane id and concurrent lanes never collide. This is the ONLY
+  // honest ground truth for E's recall: the shim returns just assistant_final.text,
+  // so a lane's intermediate read_file calls never reach the bench's SSE stream, and
+  // the model's self-reported `files_read` is invented (the F-trap). We observe the
+  // single tool dispatch chokepoint — specs()/prefix/toolSpecs are UNTOUCHED, so the
+  // cached prefix is byte-identical and this is inert to cache. Off by default.
+  const _readTraceDir = process.env.REASONIX_READ_TRACE_DIR;
+  if (_readTraceDir) {
+    const { appendFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const _traceFile = join(_readTraceDir, `reads-${process.pid}.jsonl`);
+    const _origDispatch = toolset.tools.dispatch.bind(toolset.tools);
+    toolset.tools.dispatch = async (name, argumentsRaw, opts = {}) => {
+      if (name === "read_file" || name === "read_file_isolated") {
+        try {
+          const a = typeof argumentsRaw === "string"
+            ? (argumentsRaw.trim() ? JSON.parse(argumentsRaw) : {})
+            : (argumentsRaw || {});
+          const p = a.path ?? a.file ?? a.filename ?? a.target ?? "";
+          if (p) appendFileSync(_traceFile, JSON.stringify({ tool: name, path: String(p), prompt: String(req.prompt ?? "").slice(0, 60) }) + "\n");
+        } catch { /* tracing must never break a lane */ }
+      }
+      return _origDispatch(name, argumentsRaw, opts);
+    };
+  }
+  // --------------------------------------------------------------------------
+
   const client = new DeepSeekClient({ apiKey, baseUrl });
   // Prefix system text: when the caller doesn't supply one, build the SAME code
   // system prompt the old `reasonix acp` path used (acp.ts builds
@@ -167,16 +218,62 @@ try {
     stream: true, // load-bearing: gateway watchdog needs a live producer
     session: undefined, // ephemeral, zero disk, no lane history bleed
     maxIterPerTurn: req.maxIterPerTurn ?? 1,
+    maxOutputTokens: req.maxOutputTokens ?? undefined,
   });
 
-  for await (const ev of loop.step(String(req.prompt ?? ""))) {
-    if (ev.role === "assistant_final") {
-      text = ev.content ?? "";
-      if (ev.stats) stats = ev.stats;
-    } else if (ev.role === "error") {
-      fail(`run-lane: engine error: ${ev.content || "unknown"}`, 3);
-    } else if (ev.role === "done") {
-      break;
+  const _harnessOn = (process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "1"
+    || (process.env.REASONIX_LANE_HARNESS || "").trim().toLowerCase() === "true";
+  const _acceptance = typeof req.acceptanceTest === "string" ? req.acceptanceTest.trim() : "";
+
+  if (_harnessOn && _acceptance) {
+    const { execSync } = await import("node:child_process");
+    const runTest = async () => {
+      try {
+        execSync(_acceptance, { cwd: rootDir, stdio: "pipe", timeout: 120000 });
+        return { ok: true, failCount: 0, errorSig: "" };
+      } catch (e) {
+        const out = String(e.stdout || "") + String(e.stderr || "");
+        const m = out.match(/(\d+)\s+fail/i);            // e.g. bun "N fail"
+        const failCount = m ? parseInt(m[1], 10) : 1;
+        const sig = (out.match(/[A-Za-z][\w./-]*:\d+/) || [out.slice(0, 40)])[0]; // first file:line or head
+        return { ok: false, failCount, errorSig: String(sig) };
+      }
+    };
+    const runAttempt = async (lesson) => {
+      const p = lesson ? `${String(req.prompt ?? "")}\n\nLESSON FROM LAST ATTEMPT (apply it, do not repeat the same edit):\n${lesson}` : String(req.prompt ?? "");
+      if (process.env.REASONIX_ENGINE_MOCK === "1") {
+        // harness e2e: exercise the loop/test/progress-gate without DeepSeek.
+        return process.env.REASONIX_ENGINE_MOCK_TEXT ?? `mock reasonix lane for ${String(req.prompt ?? "").slice(0, 40)}`;
+      }
+      // fresh loop per attempt = lesson-only carry (no accumulated history -> no quadratic cost)
+      const attemptLoop = new CacheFirstLoop({
+        client, prefix, tools: toolset.tools, model: req.model, stream: true,
+        // 50 (not the off-path's 1): a harness lane is a COMPLETE edit+verify sub-task
+        // needing multi-turn tool use; gated, so the off-path default is unaffected.
+        session: undefined, maxIterPerTurn: req.maxIterPerTurn ?? 50,
+        maxOutputTokens: req.maxOutputTokens ?? undefined,
+        budgetUsd: typeof req.budgetUsd === "number" ? req.budgetUsd : undefined,
+      });
+      let t = "";
+      for await (const ev of attemptLoop.step(p)) {
+        if (ev.role === "assistant_final") { t = ev.content ?? ""; if (ev.stats) stats = ev.stats; }
+        else if (ev.role === "error") throw new Error(ev.content || "engine error");
+        else if (ev.role === "done") break;
+      }
+      return t;
+    };
+    const _h = await runHarness({ runAttempt, runTest, maxAttempts: req.harnessMaxAttempts ?? 4 });
+    text = `__HARNESS__:${_h.status}:${_h.attempts}:${(_h.lastLesson || "").slice(0, 200)}`;
+  } else {
+    for await (const ev of loop.step(String(req.prompt ?? ""))) {
+      if (ev.role === "assistant_final") {
+        text = ev.content ?? "";
+        if (ev.stats) stats = ev.stats;
+      } else if (ev.role === "error") {
+        fail(`run-lane: engine error: ${ev.content || "unknown"}`, 3);
+      } else if (ev.role === "done") {
+        break;
+      }
     }
   }
 } catch (e) {
@@ -198,4 +295,5 @@ process.stdout.write(
     },
     cost_usd: stats?.cost ?? 0,
   }) + "\n",
+  () => process.exit(0), // flush-then-exit: avoids dangling-handle hang from lingering keep-alive sockets (Gap-2)
 );

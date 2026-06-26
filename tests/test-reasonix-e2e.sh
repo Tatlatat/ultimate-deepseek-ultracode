@@ -4,6 +4,15 @@
 # Requires reasonix to be logged in. Slow (~10-40s, real DeepSeek call).
 set -euo pipefail
 
+# LIVE test: needs a real, logged-in reasonix CLI + DeepSeek network. OPT-IN: runs
+# only when REASONIX_LIVE_TESTS=1 (or the legacy CLAUDE_REASONIX_E2E=1). The offline
+# CI suite (run-all.sh) sets neither, so this skips cleanly even on a dev machine
+# that happens to have reasonix installed.
+case "${REASONIX_LIVE_TESTS:-}${CLAUDE_REASONIX_E2E:-}" in
+  *1*|*true*|*yes*|*on*) : ;;
+  *) echo "SKIP: live e2e test (set REASONIX_LIVE_TESTS=1 to run)"; exit 0 ;;
+esac
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GATEWAY="$ROOT/reasonix-native-gateway.py"
 

@@ -120,7 +120,7 @@ def lane(port: int, prompt: str, schema: dict | None = None) -> dict:
         "errored": False, "secs": secs, "in_tok": in_tok, "cache_pct": cache,
         "empty": (not has_content) or hollow_marker,
         "too_slow": secs > SLOW_SECS,
-        "text_head": text[:80], "tool_input": tool_input,
+        "text_head": text[:80], "text_full": text, "tool_input": tool_input,
     }
 
 

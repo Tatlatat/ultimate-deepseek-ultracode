@@ -1610,9 +1610,9 @@ var require_picomatch = __commonJS({
     var utils = require_utils();
     var constants3 = require_constants();
     var isObject2 = (val) => val && typeof val === "object" && !Array.isArray(val);
-    var picomatch3 = (glob, options, returnState = false) => {
+    var picomatch4 = (glob, options, returnState = false) => {
       if (Array.isArray(glob)) {
-        const fns = glob.map((input) => picomatch3(input, options, returnState));
+        const fns = glob.map((input) => picomatch4(input, options, returnState));
         const arrayMatcher = (str) => {
           for (const isMatch of fns) {
             const state2 = isMatch(str);
@@ -1628,16 +1628,16 @@ var require_picomatch = __commonJS({
       }
       const opts = options || {};
       const posix = opts.windows;
-      const regex = isState ? picomatch3.compileRe(glob, options) : picomatch3.makeRe(glob, options, false, true);
+      const regex = isState ? picomatch4.compileRe(glob, options) : picomatch4.makeRe(glob, options, false, true);
       const state = regex.state;
       delete regex.state;
       let isIgnored = () => false;
       if (opts.ignore) {
         const ignoreOpts = { ...options, ignore: null, onMatch: null, onResult: null };
-        isIgnored = picomatch3(opts.ignore, ignoreOpts, returnState);
+        isIgnored = picomatch4(opts.ignore, ignoreOpts, returnState);
       }
       const matcher = (input, returnObject = false) => {
-        const { isMatch, match, output } = picomatch3.test(input, regex, options, { glob, posix });
+        const { isMatch, match, output } = picomatch4.test(input, regex, options, { glob, posix });
         const result = { glob, state, regex, posix, input, output, match, isMatch };
         if (typeof opts.onResult === "function") {
           opts.onResult(result);
@@ -1663,7 +1663,7 @@ var require_picomatch = __commonJS({
       }
       return matcher;
     };
-    picomatch3.test = (input, regex, options, { glob, posix } = {}) => {
+    picomatch4.test = (input, regex, options, { glob, posix } = {}) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected input to be a string");
       }
@@ -1680,24 +1680,24 @@ var require_picomatch = __commonJS({
       }
       if (match === false || opts.capture === true) {
         if (opts.matchBase === true || opts.basename === true) {
-          match = picomatch3.matchBase(input, regex, options, posix);
+          match = picomatch4.matchBase(input, regex, options, posix);
         } else {
           match = regex.exec(output);
         }
       }
       return { isMatch: Boolean(match), match, output };
     };
-    picomatch3.matchBase = (input, glob, options) => {
-      const regex = glob instanceof RegExp ? glob : picomatch3.makeRe(glob, options);
+    picomatch4.matchBase = (input, glob, options) => {
+      const regex = glob instanceof RegExp ? glob : picomatch4.makeRe(glob, options);
       return regex.test(utils.basename(input));
     };
-    picomatch3.isMatch = (str, patterns, options) => picomatch3(patterns, options)(str);
-    picomatch3.parse = (pattern, options) => {
-      if (Array.isArray(pattern)) return pattern.map((p) => picomatch3.parse(p, options));
+    picomatch4.isMatch = (str, patterns, options) => picomatch4(patterns, options)(str);
+    picomatch4.parse = (pattern, options) => {
+      if (Array.isArray(pattern)) return pattern.map((p) => picomatch4.parse(p, options));
       return parse5(pattern, { ...options, fastpaths: false });
     };
-    picomatch3.scan = (input, options) => scan(input, options);
-    picomatch3.compileRe = (state, options, returnOutput = false, returnState = false) => {
+    picomatch4.scan = (input, options) => scan(input, options);
+    picomatch4.compileRe = (state, options, returnOutput = false, returnState = false) => {
       if (returnOutput === true) {
         return state.output;
       }
@@ -1708,13 +1708,13 @@ var require_picomatch = __commonJS({
       if (state && state.negated === true) {
         source = `^(?!${source}).*$`;
       }
-      const regex = picomatch3.toRegex(source, options);
+      const regex = picomatch4.toRegex(source, options);
       if (returnState === true) {
         regex.state = state;
       }
       return regex;
     };
-    picomatch3.makeRe = (input, options = {}, returnOutput = false, returnState = false) => {
+    picomatch4.makeRe = (input, options = {}, returnOutput = false, returnState = false) => {
       if (!input || typeof input !== "string") {
         throw new TypeError("Expected a non-empty string");
       }
@@ -1725,9 +1725,9 @@ var require_picomatch = __commonJS({
       if (!parsed.output) {
         parsed = parse5(input, options);
       }
-      return picomatch3.compileRe(parsed, options, returnOutput, returnState);
+      return picomatch4.compileRe(parsed, options, returnOutput, returnState);
     };
-    picomatch3.toRegex = (source, options) => {
+    picomatch4.toRegex = (source, options) => {
       try {
         const opts = options || {};
         return new RegExp(source, opts.flags || (opts.nocase ? "i" : ""));
@@ -1736,8 +1736,8 @@ var require_picomatch = __commonJS({
         return /$^/;
       }
     };
-    picomatch3.constants = constants3;
-    module.exports = picomatch3;
+    picomatch4.constants = constants3;
+    module.exports = picomatch4;
   }
 });
 
@@ -1747,14 +1747,14 @@ var require_picomatch2 = __commonJS({
     "use strict";
     var pico = require_picomatch();
     var utils = require_utils();
-    function picomatch3(glob, options, returnState = false) {
+    function picomatch4(glob, options, returnState = false) {
       if (options && (options.windows === null || options.windows === void 0)) {
         options = { ...options, windows: utils.isWindows() };
       }
       return pico(glob, options, returnState);
     }
-    Object.assign(picomatch3, pico);
-    module.exports = picomatch3;
+    Object.assign(picomatch4, pico);
+    module.exports = picomatch4;
   }
 });
 
@@ -27109,6 +27109,7 @@ function atomicWriteSync(path6, body, tmp, mode = 384, fs10 = defaultFs) {
 }
 
 // src/index/config.ts
+var import_picomatch = __toESM(require_picomatch2(), 1);
 var DEFAULT_INDEX_EXCLUDES = {
   dirs: [
     "node_modules",
@@ -27193,6 +27194,28 @@ var DEFAULT_INDEX_EXCLUDES = {
   ]
 };
 var DEFAULT_MAX_FILE_BYTES = 256 * 1024;
+var DEFAULT_RESPECT_GITIGNORE = true;
+function defaultIndexConfig() {
+  return {
+    excludeDirs: [...DEFAULT_INDEX_EXCLUDES.dirs],
+    excludeFiles: [...DEFAULT_INDEX_EXCLUDES.files],
+    excludeExts: [...DEFAULT_INDEX_EXCLUDES.exts],
+    excludePatterns: [],
+    respectGitignore: DEFAULT_RESPECT_GITIGNORE,
+    maxFileBytes: DEFAULT_MAX_FILE_BYTES
+  };
+}
+function compileFilters(cfg) {
+  const matcher = cfg.excludePatterns.length === 0 ? () => false : (0, import_picomatch.default)(cfg.excludePatterns, { dot: true });
+  return {
+    dirSet: new Set(cfg.excludeDirs),
+    fileSet: new Set(cfg.excludeFiles),
+    extSet: new Set(cfg.excludeExts.map((e) => e.toLowerCase())),
+    patternMatch: matcher,
+    respectGitignore: cfg.respectGitignore,
+    maxFileBytes: cfg.maxFileBytes
+  };
+}
 
 // src/mcp/shell-split.ts
 function shellSplit(input) {
@@ -42392,7 +42415,7 @@ function applyMemoryStack(basePrompt, rootDir, opts = {}) {
 }
 
 // src/tools/filesystem.ts
-var import_picomatch2 = __toESM(require_picomatch2(), 1);
+var import_picomatch3 = __toESM(require_picomatch2(), 1);
 import { promises as fs4 } from "fs";
 import * as pathMod6 from "path";
 
@@ -43050,7 +43073,7 @@ function lineDiff(a, b) {
 }
 
 // src/tools/fs/glob.ts
-var import_picomatch = __toESM(require_picomatch2(), 1);
+var import_picomatch2 = __toESM(require_picomatch2(), 1);
 import { promises as fs2 } from "fs";
 import * as pathMod3 from "path";
 function displayRel2(rootDir, full) {
@@ -43063,7 +43086,7 @@ async function globFiles(ctx, startAbs, args) {
   const includeDeps = args.include_deps === true;
   const sortBy = args.sort_by ?? "mtime";
   const limit = Math.max(1, Math.min(1e3, Math.floor(args.limit ?? 200)));
-  const isMatch = (0, import_picomatch.default)(args.pattern, { dot: true, nocase: true });
+  const isMatch = (0, import_picomatch2.default)(args.pattern, { dot: true, nocase: true });
   const hits = [];
   const walk2 = async (dir) => {
     if (args.signal?.aborted) {
@@ -43701,7 +43724,7 @@ function compileNameFilter(filter) {
     return (name) => name.toLowerCase().includes(needle);
   }
   const matchPath = filter.includes("/");
-  const isMatch = (0, import_picomatch2.default)(filter, { dot: true, nocase: true });
+  const isMatch = (0, import_picomatch3.default)(filter, { dot: true, nocase: true });
   return matchPath ? (_n, rel) => isMatch(rel) : (name) => isMatch(name);
 }
 function isLikelyBinaryByName(name) {
@@ -48896,7 +48919,7 @@ function readPackageVersion() {
       const p = join17(dir, "package.json");
       if (existsSync13(p)) {
         const pkg = JSON.parse(readFileSync15(p, "utf8"));
-        if (pkg?.name === "reasonix" && typeof pkg.version === "string") {
+        if ((pkg?.name === "reasonix" || pkg?.name === "deepseek-reasonix-engine") && typeof pkg.version === "string") {
           return pkg.version;
         }
       }
@@ -50157,11 +50180,177 @@ import path4 from "path";
 // src/index/semantic/chunker.ts
 import { promises as fs5 } from "fs";
 import path2 from "path";
+var DEFAULT_MAX_CHUNK_CHARS = 4e3;
+function chunkText(text, filePath, windowLines, overlap, maxChunkChars = DEFAULT_MAX_CHUNK_CHARS) {
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0 || lines.length === 1 && lines[0] === "") return [];
+  const stride = Math.max(1, windowLines - overlap);
+  const chunks = [];
+  for (let start = 0; start < lines.length; start += stride) {
+    const end = Math.min(lines.length, start + windowLines);
+    const slice = lines.slice(start, end).join("\n").trim();
+    if (slice.length === 0) {
+      if (end >= lines.length) break;
+      continue;
+    }
+    const window = {
+      path: filePath,
+      startLine: start + 1,
+      endLine: end,
+      text: slice
+    };
+    for (const sub of safeSplit(window, maxChunkChars)) chunks.push(sub);
+    if (end >= lines.length) break;
+  }
+  return chunks;
+}
+function safeSplit(chunk, maxChars) {
+  if (chunk.text.length <= maxChars) return [chunk];
+  const lines = chunk.text.split("\n");
+  const out = [];
+  let bufLines = [];
+  let bufStart = chunk.startLine;
+  let bufLen = 0;
+  const flush = (untilLineNo) => {
+    if (bufLines.length === 0) return;
+    out.push({
+      path: chunk.path,
+      startLine: bufStart,
+      endLine: untilLineNo,
+      text: bufLines.join("\n")
+    });
+    bufLines = [];
+    bufLen = 0;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const lineLen = line.length + 1;
+    if (lineLen > maxChars) {
+      flush(chunk.startLine + i - 1);
+      out.push({
+        path: chunk.path,
+        startLine: chunk.startLine + i,
+        endLine: chunk.startLine + i,
+        text: line.slice(0, maxChars)
+      });
+      bufStart = chunk.startLine + i + 1;
+      continue;
+    }
+    if (bufLen + lineLen > maxChars && bufLines.length > 0) {
+      flush(chunk.startLine + i - 1);
+      bufStart = chunk.startLine + i;
+    }
+    bufLines.push(line);
+    bufLen += lineLen;
+  }
+  flush(chunk.endLine);
+  return out;
+}
+function toForwardRel(root, abs) {
+  return path2.relative(root, abs).split(path2.sep).join("/");
+}
+async function* walkChunks(root, opts = {}) {
+  const windowLines = opts.windowLines ?? 60;
+  const overlap = Math.min(opts.overlap ?? 12, Math.max(0, windowLines - 1));
+  const maxChunkChars = opts.maxChunkChars ?? DEFAULT_MAX_CHUNK_CHARS;
+  const filters = compileFilters(opts.config ?? defaultIndexConfig());
+  const onSkip = opts.onSkip ?? (() => {
+  });
+  const initial = [];
+  if (filters.respectGitignore) {
+    const rootIg = await loadGitignoreAt(root);
+    if (rootIg) initial.push({ dirAbs: root, ig: rootIg });
+  }
+  const stack = [{ dir: root, layers: initial }];
+  while (stack.length > 0) {
+    const frame = stack.pop();
+    if (!frame) break;
+    const { dir, layers } = frame;
+    let entries;
+    try {
+      entries = await fs5.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const name = entry.name;
+      const abs = path2.join(dir, name);
+      const rel = toForwardRel(root, abs);
+      if (entry.isDirectory()) {
+        if (filters.dirSet.has(name)) {
+          onSkip(rel, "defaultDir");
+          continue;
+        }
+        if (filters.respectGitignore && ignoredByLayers(layers, abs, true)) {
+          onSkip(rel, "gitignore");
+          continue;
+        }
+        if (filters.patternMatch(`${rel}/`) || filters.patternMatch(rel)) {
+          onSkip(rel, "pattern");
+          continue;
+        }
+        const childLayers = filters.respectGitignore ? await extendLayers(layers, abs) : layers;
+        stack.push({ dir: abs, layers: childLayers });
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (filters.fileSet.has(name)) {
+        onSkip(rel, "defaultFile");
+        continue;
+      }
+      const ext = path2.extname(name).toLowerCase();
+      if (filters.extSet.has(ext)) {
+        onSkip(rel, "binaryExt");
+        continue;
+      }
+      if (filters.respectGitignore && ignoredByLayers(layers, abs, false)) {
+        onSkip(rel, "gitignore");
+        continue;
+      }
+      if (filters.patternMatch(rel)) {
+        onSkip(rel, "pattern");
+        continue;
+      }
+      const result = await readSizeBoundedFile(abs, filters.maxFileBytes);
+      if (result.kind === "skip") {
+        onSkip(rel, result.reason);
+        continue;
+      }
+      const text = result.text;
+      if (text.indexOf("\0") !== -1) {
+        onSkip(rel, "binaryContent");
+        continue;
+      }
+      for (const chunk of chunkText(text, rel, windowLines, overlap, maxChunkChars)) {
+        yield chunk;
+      }
+    }
+  }
+}
+async function extendLayers(layers, dirAbs) {
+  const ig = await loadGitignoreAt(dirAbs);
+  return ig ? [...layers, { dirAbs, ig }] : layers;
+}
+async function readSizeBoundedFile(abs, maxBytes) {
+  try {
+    const fh = await fs5.open(abs, "r");
+    try {
+      const stat3 = await fh.stat();
+      if (stat3.size > maxBytes) return { kind: "skip", reason: "tooLarge" };
+      return { kind: "ok", text: await fh.readFile("utf8") };
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return { kind: "skip", reason: "readError" };
+  }
+}
 
 // src/index/semantic/embedding.ts
 var DEFAULT_OLLAMA_URL2 = "http://localhost:11434";
 var DEFAULT_EMBED_MODEL2 = "nomic-embed-text";
 var DEFAULT_TIMEOUT_MS3 = 18e4;
+var DEFAULT_BATCH_SIZE2 = 10;
 var EmbeddingError = class extends Error {
   constructor(message, cause) {
     super(message);
@@ -50173,6 +50362,39 @@ var EmbeddingError = class extends Error {
 async function embed(text, opts = {}) {
   if (opts.provider === "openai-compat") return await embedOpenAICompat(text, opts);
   return await embedOllama(text, opts);
+}
+async function embedAll(texts, opts = {}) {
+  if (opts.provider === "openai-compat") return await embedAllOpenAICompat(texts, opts);
+  const out = [];
+  for (let i = 0; i < texts.length; i++) {
+    if (opts.signal?.aborted) throw new EmbeddingError("embedding aborted");
+    const text = texts[i];
+    if (text === void 0) continue;
+    try {
+      out.push(await embed(text, opts));
+    } catch (err) {
+      if (isAbortError2(err) || opts.signal?.aborted) {
+        throw new EmbeddingError("embedding aborted", err);
+      }
+      opts.onError?.(i, err);
+      out.push(null);
+    }
+    opts.onProgress?.(i + 1, texts.length);
+  }
+  return out;
+}
+async function probeOllama(opts = {}) {
+  const baseUrl = opts.baseUrl ?? process.env.OLLAMA_URL ?? DEFAULT_OLLAMA_URL2;
+  try {
+    const res = await fetch(`${baseUrl}/api/tags`, { signal: opts.signal });
+    if (!res.ok) return { ok: false, error: `Ollama returned ${res.status}` };
+    const json2 = await res.json();
+    const models = (json2.models ?? []).map((m) => m.name).filter((n) => typeof n === "string");
+    return { ok: true, models };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
 }
 async function embedOllama(text, opts) {
   const baseUrl = opts.baseUrl ?? process.env.OLLAMA_URL ?? DEFAULT_OLLAMA_URL2;
@@ -50224,6 +50446,33 @@ async function embedOpenAICompat(text, opts) {
     );
   }
   return v;
+}
+async function embedAllOpenAICompat(texts, opts) {
+  if (texts.length === 0) return [];
+  if (opts.signal?.aborted) throw new EmbeddingError("embedding aborted");
+  const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE2;
+  const result = [];
+  let done = 0;
+  for (let i = 0; i < texts.length; i += batchSize) {
+    if (opts.signal?.aborted) throw new EmbeddingError("embedding aborted");
+    const batch = texts.slice(i, i + batchSize);
+    const vectors = await requestOpenAICompatEmbeddings([...batch], opts);
+    for (let j = 0; j < vectors.length; j++) {
+      const idx = i + j;
+      if (vectors[j] === null) {
+        opts.onError?.(
+          idx,
+          new EmbeddingError(
+            `provider dropped input ${idx} from batch ${Math.floor(i / batchSize) + 1} (model ${opts.model} returned no embedding for it)`
+          )
+        );
+      }
+    }
+    result.push(...vectors);
+    done += vectors.length;
+    opts.onProgress?.(done, texts.length);
+  }
+  return result;
 }
 async function requestOpenAICompatEmbeddings(input, opts) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS3;
@@ -50562,6 +50811,151 @@ function normalizeMeta(meta3) {
 
 // src/index/semantic/builder.ts
 var INDEX_DIR_NAME = path4.join(".reasonix", "semantic");
+function emptyBuckets() {
+  return {
+    defaultDir: 0,
+    defaultFile: 0,
+    binaryExt: 0,
+    binaryContent: 0,
+    tooLarge: 0,
+    gitignore: 0,
+    pattern: 0,
+    readError: 0
+  };
+}
+async function buildIndex(root, opts = {}) {
+  const t0 = Date.now();
+  const indexDir = path4.join(root, INDEX_DIR_NAME);
+  const resolved = resolveBuildEmbeddingConfig(opts);
+  opts.onProgress?.({ phase: "setup" });
+  throwIfAborted2(opts.signal);
+  await probeEmbeddingProvider(resolved, opts.signal);
+  throwIfAborted2(opts.signal);
+  if (opts.rebuild) await wipeStoreFiles(indexDir);
+  const store = await openStore(indexDir, {
+    provider: resolved.provider,
+    model: resolved.model
+  });
+  const lastMtimes = store.fileMtimes();
+  const seenPaths = /* @__PURE__ */ new Set();
+  const fileChunks = /* @__PURE__ */ new Map();
+  let filesScanned = 0;
+  let filesSkipped = 0;
+  const skipBuckets = emptyBuckets();
+  for await (const chunk of walkChunks(root, {
+    windowLines: opts.windowLines,
+    overlap: opts.overlap,
+    config: opts.indexConfig ?? defaultIndexConfig(),
+    onSkip: (_p, reason) => {
+      skipBuckets[reason]++;
+    }
+  })) {
+    throwIfAborted2(opts.signal);
+    seenPaths.add(chunk.path);
+    let bucket = fileChunks.get(chunk.path);
+    if (!bucket) {
+      filesScanned++;
+      const abs = path4.join(root, chunk.path);
+      let mtimeMs = 0;
+      try {
+        const stat3 = await fs7.stat(abs);
+        mtimeMs = stat3.mtimeMs;
+      } catch {
+        continue;
+      }
+      const last = lastMtimes.get(chunk.path);
+      if (last !== void 0 && last === mtimeMs && !opts.rebuild) {
+        filesSkipped++;
+        continue;
+      }
+      bucket = { chunks: [], mtimeMs };
+      fileChunks.set(chunk.path, bucket);
+    }
+    bucket.chunks.push(chunk);
+    opts.onProgress?.({ phase: "scan", filesScanned });
+  }
+  throwIfAborted2(opts.signal);
+  const deletedPaths = [];
+  for (const oldPath of lastMtimes.keys()) {
+    if (!seenPaths.has(oldPath)) deletedPaths.push(oldPath);
+  }
+  const replacePaths = [...fileChunks.keys()].filter((p) => lastMtimes.has(p));
+  throwIfAborted2(opts.signal);
+  const removed = await store.remove([...deletedPaths, ...replacePaths]);
+  let chunksAdded = 0;
+  let chunksSkipped = 0;
+  const filesChanged = fileChunks.size;
+  let chunksTotal = 0;
+  for (const { chunks } of fileChunks.values()) chunksTotal += chunks.length;
+  let chunksDone = 0;
+  for (const [, bucket] of fileChunks) {
+    throwIfAborted2(opts.signal);
+    if (bucket.chunks.length === 0) continue;
+    const texts = bucket.chunks.map((c) => c.text);
+    const vectors = await embedAll(texts, {
+      ...resolved,
+      signal: opts.signal,
+      onProgress: (done, total) => {
+        opts.onProgress?.({
+          phase: "embed",
+          filesScanned,
+          filesChanged,
+          chunksTotal,
+          chunksDone: chunksDone + done
+        });
+        if (done === total) chunksDone += total;
+      },
+      onError: (idx, err) => {
+        chunksSkipped++;
+        const c = bucket.chunks[idx];
+        const where = c ? `${c.path}:${c.startLine}-${c.endLine}` : `chunk #${idx}`;
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`
+  ! skipped ${where}: ${msg}
+`);
+      }
+    });
+    throwIfAborted2(opts.signal);
+    const entries = [];
+    for (let i = 0; i < bucket.chunks.length; i++) {
+      const vec = vectors[i];
+      if (!vec) continue;
+      const c = bucket.chunks[i];
+      if (!c) continue;
+      normalize2(vec);
+      entries.push({
+        path: c.path,
+        startLine: c.startLine,
+        endLine: c.endLine,
+        text: c.text,
+        embedding: vec,
+        mtimeMs: bucket.mtimeMs
+      });
+    }
+    throwIfAborted2(opts.signal);
+    if (entries.length > 0) await store.add(entries);
+    chunksAdded += entries.length;
+  }
+  throwIfAborted2(opts.signal);
+  opts.onProgress?.({
+    phase: "done",
+    filesScanned,
+    filesSkipped,
+    filesChanged,
+    chunksTotal,
+    chunksDone,
+    skipBuckets
+  });
+  return {
+    filesScanned,
+    filesChanged,
+    chunksAdded,
+    chunksRemoved: removed,
+    chunksSkipped,
+    skipBuckets,
+    durationMs: Date.now() - t0
+  };
+}
 async function querySemantic(root, query, opts = {}) {
   const indexDir = path4.join(root, INDEX_DIR_NAME);
   const resolved = resolveQueryEmbeddingConfig(opts);
@@ -50615,6 +51009,20 @@ function resolveIndexIdentity(opts) {
 }
 function resolveQueryEmbeddingConfig(opts) {
   return resolveBuildEmbeddingConfig(opts);
+}
+async function probeEmbeddingProvider(config2, signal) {
+  if (config2.provider === "openai-compat") return;
+  const probe = await probeOllama({ baseUrl: config2.baseUrl, signal });
+  if (!probe.ok) {
+    throw new Error(
+      `Ollama is not reachable: ${probe.error}. Install from https://ollama.com, then \`ollama serve\` and \`ollama pull ${config2.model}\`.`
+    );
+  }
+}
+function throwIfAborted2(signal) {
+  if (signal?.aborted) {
+    throw new Error("semantic indexing aborted");
+  }
 }
 
 // src/index/semantic/tool.ts
@@ -51846,8 +52254,84 @@ async function buildCodeToolset(opts) {
       return formatSubagentResult(result);
     }
   });
+  if (readIsolatedEnabled()) {
+    const readFileDef = tools.get("read_file");
+    if (readFileDef && !readFileDef.description?.includes("read_file_isolated")) {
+      tools.register({
+        ...readFileDef,
+        description: `${readFileDef.description ?? ""} For large files, prefer read_file_isolated \u2014 it reads in a separate context and returns only a short summary, keeping your context clean.`
+      });
+    }
+    const ensureSubagentClient = () => {
+      if (!subagentClient) {
+        const ep = loadEndpoint();
+        subagentClient = new DeepSeekClient({ apiKey: ep.apiKey, baseUrl: ep.baseUrl });
+      }
+      return subagentClient;
+    };
+    tools.register({
+      name: "read_file_isolated",
+      parallelSafe: true,
+      readOnly: true,
+      description: "Read a (typically large) file WITHOUT loading its raw contents into your context. Spawns a read-only child agent in a separate context that reads the file and returns only a concise \u22642K summary of what's relevant. Use this instead of read_file when you only need to UNDERSTAND a big file (its structure, where something is, whether it does X) rather than edit it \u2014 you keep your context clean and pay one cheap child loop instead of ingesting the whole file. For files you intend to edit, use read_file (the edit gate requires a direct read).",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Path to read (relative to rootDir or absolute)."
+          },
+          focus: {
+            type: "string",
+            description: "Optional: what to look for in the file (e.g. 'the auth flow', 'where TIMEOUT is set'). Sharpens the summary; omit for a general overview."
+          }
+        },
+        required: ["path"]
+      },
+      fn: async (args, ctx) => {
+        const path6 = typeof args.path === "string" ? args.path.trim() : "";
+        if (!path6) {
+          return JSON.stringify({ error: "read_file_isolated requires a non-empty 'path'." });
+        }
+        const focus = typeof args.focus === "string" && args.focus.trim().length > 0 ? args.focus.trim() : void 0;
+        const tracePath = (process.env.REASONIX_READ_ISOLATED_TRACE ?? "").trim();
+        if (tracePath) {
+          try {
+            const { appendFileSync: appendFileSync3 } = await import("fs");
+            appendFileSync3(tracePath, `${JSON.stringify({ ts: Date.now(), path: path6 })}
+`);
+          } catch {
+          }
+        }
+        const task = focus ? `Read the file at path "${path6}" using read_file (chunk with range/head/tail if large) and return a \u22642000-character summary focused on: ${focus}. Lead with the conclusion; cite file:line ranges. Do NOT paste the raw file back.` : `Read the file at path "${path6}" using read_file (chunk with range/head/tail if large) and return a \u22642000-character summary of its purpose, structure, and key contents. Lead with the conclusion; cite file:line ranges. Do NOT paste the raw file back.`;
+        const result = await spawnSubagent({
+          client: ensureSubagentClient(),
+          parentRegistry: tools,
+          system: EXPLORE_SYSTEM,
+          task,
+          // Read-only child: only the tools it needs to read + locate.
+          allowedTools: [
+            "read_file",
+            "search_content",
+            "search_files",
+            "list_directory",
+            "get_file_info"
+          ],
+          // Hard-cap the surfaced result so the parent never ingests bulk.
+          maxResultChars: 2e3,
+          parentSignal: ctx?.signal,
+          sink: opts.subagentSink ?? SHARED_SUBAGENT_SINK
+        });
+        return formatSubagentResult(result);
+      }
+    });
+  }
   const semantic = await reBootstrapSemantic(opts.rootDir);
   return { tools, jobs, registerRooted, reBootstrapSemantic, semantic };
+}
+function readIsolatedEnabled() {
+  const v = (process.env.REASONIX_READ_ISOLATED ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 // src/telemetry/usage.ts
@@ -52119,6 +52603,7 @@ export {
   bucketCacheHitRatio,
   bucketSavingsFraction,
   buildCodeToolset,
+  buildIndex,
   claudeEquivalentCost,
   codeSystemPrompt,
   compareVersions,
@@ -52152,6 +52637,7 @@ export {
   healLoadedMessages,
   healLoadedMessagesByTokens,
   htmlToText,
+  indexCompatible,
   injectPowerShellUtf8,
   inputCostUsd,
   inspectMcpServer,

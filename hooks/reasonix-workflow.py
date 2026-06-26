@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
+import time
 from pathlib import Path
 import sys
 
@@ -75,22 +77,178 @@ PREFIX_GUIDE_TEXT = (
     "   if the single warm-up lane flakes (empty/error), the prefix is NOT seeded and\n"
     "   the whole burst goes cold (measured: a failed warm-up dropped a burst to\n"
     "   ~94.9%). Retry the warm-up until it lands a real reply.\n"
-    "9. CROSS-WORKFLOW CACHE ACCUMULATION — when you run MANY workflows on the SAME\n"
-    "   codebase/dataset from DIFFERENT angles (the long-haul pattern), cache builds\n"
-    "   ACROSS workflows so later ones get cheaper, IF every lane of every workflow\n"
-    "   puts the SAME byte-identical shared block (the codebase/files/context) FIRST\n"
-    "   from token 0, and the per-lane angle/question LAST. Measured: codebase-first\n"
-    "   accumulates 96.96%->97.57%->99.60% over 3 same-codebase workflows; putting the\n"
-    "   angle BEFORE the codebase breaks the byte-prefix and flat-lines at ~78% with NO\n"
-    "   accumulation. DeepSeek persists a common prefix only AFTER 1-2 requests pay full\n"
-    "   price, then every later same-prefix request hits it. So: build the shared block\n"
-    "   ONCE, reuse the EXACT bytes across all workflows, never let any per-workflow or\n"
-    "   per-lane text precede it, and run same-codebase workflows back-to-back (long\n"
-    "   idle gaps let DeepSeek evict the warm prefix; the win is best-effort high-90s,\n"
-    "   not a guaranteed climb to 99.2). Switching to a DIFFERENT codebase resets the\n"
-    "   accumulation — group same-context work together.\n"
+    "9. WHAT ACTUALLY DRIVES CACHE — it is PER-LANE, not per-workflow. RE-MEASURED\n"
+    "   (48-lane prefix-trace, real DeepSeek): cache does NOT 'accumulate' so that\n"
+    "   later workflows get cheaper — running many workflows on one codebase stays in\n"
+    "   a flat ~92-99% band that jitters per-lane. The single thing that decides a\n"
+    "   lane's cache is whether it CALLS TOOLS: a lane that answers from the bytes\n"
+    "   ALREADY in its prompt = ~14.5K input, 99.6% cache; a lane that has to read\n"
+    "   files (read_file/grep/shell) appends UNIQUE tool-output (the file bytes) that\n"
+    "   was never in the shared prefix, so it misses — input climbs to 18-58K and cache\n"
+    "   falls to 65-98%. Measured: 17/17 heavy lanes called 1-32 tools; 15/15 floor\n"
+    "   lanes called zero. So the lever is NOT 'order workflows' and NOT a tool cap\n"
+    "   (capping tool calls STARVES a lane that genuinely needs the file -> worse/\n"
+    "   hallucinated answers). The lever is: put the bytes the lane needs INTO its\n"
+    "   prompt's shared block so it never has to read them (see point 12).\n"
+    "10. VERIFY-FAIL IS NOT REJECTION — a verify/check lane that returns empty, errors, "
+    "or carries a 'LANE_UNVERIFIED:' marker means the lane COULD NOT verify (e.g. timed "
+    "out), NOT that the finding is false. Default to KEEPING such a finding marked "
+    "'unverified'; never move it to a 'rejected' bucket on an empty/failed verdict. In "
+    "code: treat `!verdict?.confirmed` as rejected ONLY when the verdict actually came "
+    "back with confirmed:false — an absent/empty verdict is UNVERIFIED.\n"
+    "11. HARD-TASK HARNESS — when a lane must EDIT code and pass tests (a real refactor/"
+    "fix, not a read), make each lane a COMPLETE sub-task (it drafts + edits + verifies, "
+    "not just drafts), and hand it an INSTANCE-LEVEL spec: a 1-2 sentence plan + the EXACT "
+    "files it touches + one line `ACCEPTANCE_TEST: <shell command>` (e.g. "
+    "`ACCEPTANCE_TEST: bun test path/x.test.ts`). The text after `ACCEPTANCE_TEST:` must be "
+    "ONLY the runnable shell command — NO prose, no 'passes', no '(must pass)', no 'AND verify "
+    "...'; chain multiple commands with `&&` (e.g. `cargo test --lib x && cargo check --lib`). "
+    "The lane harness runs that command, and "
+    "on failure makes the lane retry with a short lesson until the test passes or it "
+    "stalls (then it returns LANE_ESCALATE for you to take over). Do NOT dump repo "
+    "structure, file summaries, or few-shot examples into a lane — measured to HURT a weak "
+    "executor (instance-level plan+files+test is what helps). Review the SHORT lane results "
+    "(LANE_OK / LANE_ESCALATE); only take over the LANE_ESCALATE lanes yourself.\n"
+    "12. ONE LANE = ONE FILE, FILE IN THE PREFIX — the cheapest AND highest-quality "
+    "fan-out shape, measured BOTH sides (A/B, real gateway). For an 'analyze/review N "
+    "files' job, do NOT hand a lane a vague 'analyze the codebase' and let it read files "
+    "at runtime. Instead give EACH lane ONE file, with that file's full text placed FIRST "
+    "in the lane prompt (the shared/cacheable position), the per-lane question LAST. The "
+    "orchestrator only NAMES the files in its own plan (a few tokens) — it must NOT read "
+    "the file contents into its OWN context to 'feed' the lanes (that is the $42 paradox: "
+    "raw file bytes in the Opus context get re-read every turn). Measured A/B on the "
+    "reasonix_gateway package: COARSE (orchestrator reads all files -> 2 big lanes) cost "
+    "Opus ~42K input tokens, DeepSeek cache 39.8%; FINE (orchestrator names files -> 8 "
+    "lanes, 1 file each in-prefix) cost Opus 52 input tokens (806x less), DeepSeek cache "
+    "72.5% -> ~2.7x cheaper TOTAL. Finer decomposition makes BOTH Opus AND DeepSeek "
+    "cheaper, because the raw file bytes live in the lane (cached) instead of the "
+    "orchestrator context (re-read).\n"
     "This is advisory — correctness first; apply where it doesn't distort the work."
 )
+
+
+# === Lever E — SPECULATIVE CONTEXT PREFETCH (advisory mode first, Q7) ==========
+# Concept: from the workflow script/task text, PREDICT which real files the fan-out
+# lanes will read. Owner Q7: ship ADVISORY mode FIRST — predict + LOG a precision
+# metric (predicted ∩ actually-read / predicted), with ZERO prompt/prefix change
+# (no injection). Only a future 'inject' mode would place file summaries in the
+# shared prefix; that is NOT this task. Advisory is pure measurement: does the
+# prediction work well enough to justify inject later?
+#
+# HARD INVARIANT: advisory (and the inject stub) MUST NOT alter a single prompt or
+# prefix byte. predict_prefetch_files only READS the task text; the advisory log is
+# emitted to a side channel (stderr + a jsonl ledger), never into updatedInput or
+# additionalContext. Zero cache risk.
+_PREFETCH_MAX_FILES = 8
+_PREFETCH_FILE_CAP_BYTES = 32768  # reserved for a future inject mode (summary cap)
+_PREFETCH_TIMEOUT = 20            # reserved for a future inject summarize budget
+
+# A path/filename token: an optional dir prefix + a basename with a known code/doc
+# extension. Deliberately conservative — only tokens that LOOK like real files are
+# considered, then each is confirmed to EXIST under cwd before being predicted.
+_PREFETCH_PATH_RE = re.compile(
+    r"""(?<![\w./-])             # not mid-token
+        (                        # capture the path
+          (?:[\w./-]+/)?         # optional dir segments
+          [\w-]+                 # stem
+          \.(?:py|pyx|pyi|js|mjs|cjs|ts|tsx|jsx|md|json|jsonl|sh|bash|zsh|
+              txt|toml|yaml|yml|cfg|ini|rs|go|java|c|h|cpp|hpp|rb|php|sql|html|css)
+        )
+        (?![\w/])                # not followed by more path chars
+    """,
+    re.VERBOSE,
+)
+
+
+def predict_prefetch_files(task_text: str, cwd: str | None) -> list[str]:
+    """Predict the files a workflow's lanes will read, from the task/script text.
+
+    Returns a BOUNDED (<= _PREFETCH_MAX_FILES) de-duplicated list of ABSOLUTE paths
+    that ACTUALLY EXIST under cwd. Pure regex over the text + a filesystem-exists
+    check — NO grep-symbol fallback (Q7). A token that does not resolve to a real
+    file under cwd is dropped, so a task naming no real file returns [].
+
+    This function NEVER mutates the prompt; the caller logs its output to a side
+    channel in advisory mode.
+    """
+    if not task_text or not cwd:
+        return []
+    try:
+        base = Path(cwd).expanduser().resolve()
+    except Exception:  # noqa: BLE001
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _PREFETCH_PATH_RE.finditer(task_text):
+        token = match.group(1)
+        # Resolve relative to cwd; also try the bare basename anywhere is NOT done —
+        # we only honor the path as written (relative-to-cwd or already absolute),
+        # so the prediction is grounded in the literal reference.
+        candidate = (base / token) if not os.path.isabs(token) else Path(token)
+        try:
+            resolved = candidate.expanduser().resolve()
+        except Exception:  # noqa: BLE001
+            continue
+        if not resolved.is_file():
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+        if len(out) >= _PREFETCH_MAX_FILES:
+            break
+    return out
+
+
+def prefetch_mode() -> str:
+    """off | advisory | inject. Default off (Q7: advisory ships first, then off
+    is the safe default until precision justifies promotion)."""
+    mode = os.getenv("CLAUDE_REASONIX_PREFETCH_CONTEXT", "off").strip().lower()
+    if mode in {"advisory", "inject"}:
+        return mode
+    return "off"
+
+
+def _prefetch_log_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "runtime" / "prefetch-advisory.jsonl"
+
+
+def run_prefetch_advisory(script: str, cwd: str | None) -> list[str]:
+    """ADVISORY MODE side effect only — predict the files the lanes will read and
+    LOG them. Returns the predicted list (for callers/tests). Emits NOTHING into the
+    prompt: it writes to stderr + a jsonl ledger so a later step can compute precision
+    (predicted ∩ actually-read / predicted) against the files the lanes really read.
+
+    'inject' mode is a documented STUB this task: it predicts + logs exactly like
+    advisory but does NOT place anything in the shared prefix (that is a future task).
+    """
+    mode = prefetch_mode()
+    if mode == "off":
+        return []
+    predicted = predict_prefetch_files(script, cwd)
+    record = {
+        "ts": time.time(),
+        "mode": mode,
+        "cwd": cwd,
+        "predicted": predicted,
+        "predicted_count": len(predicted),
+        # inject is a stub: flag that no prefix change was made.
+        "injected": False,
+    }
+    line = json.dumps(record, ensure_ascii=False)
+    # stderr (visible in hook logs) — never stdout, which carries the hook protocol.
+    print(f"reasonix-prefetch[{mode}]: predicted {len(predicted)} files: {predicted}",
+          file=sys.stderr)
+    try:
+        log = _prefetch_log_path()
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception as exc:  # noqa: BLE001 - logging must never break the hook
+        print(f"reasonix-prefetch log skipped: {exc}", file=sys.stderr)
+    return predicted
 
 
 def find_matching_brace(text: str, open_index: int) -> int:
@@ -453,6 +611,16 @@ def main() -> int:
         additional_context = additional_context + "\n\n" + selfheal_context
     if os.getenv("CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE", os.getenv("CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE", "1")).lower() in {"1", "true", "yes", "on"}:
         additional_context = additional_context + "\n\n" + PREFIX_GUIDE_TEXT
+
+    # Lever E — speculative context prefetch, ADVISORY MODE (Q7). Predict + LOG the
+    # files the lanes will read; ZERO prompt change. This runs AFTER updated and
+    # additional_context are fully assembled and MUST NOT mutate either — it only
+    # writes to a side channel (stderr + jsonl) so precision can be measured later.
+    # Fail-open: a prediction/log error never breaks the hook output.
+    try:
+        run_prefetch_advisory(rewritten, payload.get("cwd"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"reasonix-prefetch advisory skipped: {exc}", file=sys.stderr)
 
     print(
         json.dumps(

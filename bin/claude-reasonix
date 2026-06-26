@@ -43,6 +43,33 @@ if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
   : "${CLAUDE_CODEX_NATIVE_SUBAGENTS:=${CLAUDE_REASONIX_NATIVE_SUBAGENTS:-1}}"
   export CLAUDE_CODEX_SUBAGENT_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION
   export CLAUDE_CODEX_WORKFLOW_MODE CLAUDE_CODEX_NATIVE_SUBAGENTS
+  # TOKEN-REDUCTION levers — the two PROVEN on real DeepSeek (measure-then-promote):
+  #   READ_SUMMARY (Lever A): caps a read lane's output to a compact summary —
+  #     measured output -94.7% on verbose read lanes, quality held. Truncation on big
+  #     files is recovered by READ_RETRY_HOLLOW (an empty A-capped read lane retries
+  #     once at 2x cap; measured 0/10 hollow vs 5/10 without).
+  #   READER_BROADEN: routes read-heavy verbs (analyze/review/audit/examine/...) to
+  #     'read' so Lever A reaches them (was only ~20% of read lanes tagged 'read').
+  # All other levers (F output-discipline, C cache, B isolation, D pre-index, E
+  # prefetch, G overscope-reject) stay OFF — they did not measure net-positive on the
+  # real flash fan-out. Defaults are overridable: set any of these to 0 to disable.
+  : "${CLAUDE_REASONIX_GATEWAY_READ_SUMMARY:=1}"
+  : "${CLAUDE_REASONIX_GATEWAY_READER_BROADEN:=1}"
+  : "${CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW:=1}"
+  export CLAUDE_REASONIX_GATEWAY_READ_SUMMARY CLAUDE_REASONIX_GATEWAY_READER_BROADEN
+  export CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW
+  # STABILITY (sub-project A) — all three ON by default, MEASURED on the vatlieu-kho
+  # audit A/B (2026-06-25): vs OFF, A1a(14KiB)+A2 gave cost -40%, output -41%, cache
+  # 91.7%->95.6% (+3.9pt), timeout 1->0, and NO precision loss (the confirmed-count
+  # drop was verify-lane flash variance routed to 'unverified', not A1a; 0 findings
+  # lost). A3 marker is strictly safer (a timed-out lane surfaces UNVERIFIED, not a
+  # bare error). A1a outline-threshold = 14336 (14 KiB): files larger summarize to an
+  # outline instead of dumping raw — the mechanical fix for lanes that read big files
+  # and time out. Defaults overridable: set any to 0 to disable.
+  : "${CLAUDE_REASONIX_GATEWAY_LANE_FAIL_MARKER:=1}"
+  : "${CLAUDE_REASONIX_GATEWAY_OVERSCOPE_REJECT:=1}"
+  : "${REASONIX_LANE_OUTLINE_THRESHOLD_BYTES:=14336}"
+  export CLAUDE_REASONIX_GATEWAY_LANE_FAIL_MARKER CLAUDE_REASONIX_GATEWAY_OVERSCOPE_REJECT REASONIX_LANE_OUTLINE_THRESHOLD_BYTES
   # The engine is the owner's fork, bundled in-process and driven via the one-shot
   # Node shim engine/run-lane.mjs (NO upstream reasonix subprocess). The gateway
   # spawns that shim as `node`, so `node` must be on the child PATH. The gateway is
