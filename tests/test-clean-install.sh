@@ -16,6 +16,11 @@ export CLAUDE_REASONIX_BIN_DIR="$TMP/bin"
 # Also forward the engine dist path so the launcher's doctor can find it without
 # relying on the real install home.
 export REASONIX_ENGINE_DIST="$CLAUDE_REASONIX_FLEET_INSTALL_HOME/vendor/reasonix-engine/dist/index.js"
+# Provide a dummy DeepSeek key so install.sh's auth step takes the env branch.
+# This test checks the install STRUCTURE, not auth — without a key, install.sh's
+# first-run key prompt would `die` on a key-less, non-TTY runner. A real CI install
+# would set DEEPSEEK_API_KEY too. No network happens here; the dummy is never used.
+export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-sk-clean-install-test-dummy}"
 
 # Cleanup on exit (success or failure) — this is the safety net that guarantees
 # the temp dir is always removed even if a test assertion aborts early.
