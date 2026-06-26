@@ -115,6 +115,31 @@ Worker lanes authenticate with `DEEPSEEK_API_KEY` if set, otherwise the bundled 
 falls back to the DeepSeek credential in `~/.reasonix/config.json` — so on a logged-in
 machine no separate key export is needed.
 
+## Configuration
+
+The flags you are likely to ever set:
+
+```bash
+# Auth
+DEEPSEEK_API_KEY=sk-...              # DeepSeek API key; falls back to ~/.reasonix/config.json
+
+# Fleet on/off and concurrency (also settable via `claude-reasonix on/off/workers`)
+CLAUDE_REASONIX_FLEET_DEFAULT_WORKERS=16   # concurrent lane slots (default: 16)
+
+# Hard-task harness — retries failing lanes; off by default
+CLAUDE_REASONIX_GATEWAY_LANE_HARNESS=1     # enable weak-executor retry harness (default: 0)
+
+# Promoted levers — these are default-ON (the launcher sets them to 1)
+CLAUDE_REASONIX_GATEWAY_READ_SUMMARY=1       # cap read-lane output to a compact summary
+CLAUDE_REASONIX_GATEWAY_READER_BROADEN=1     # route analyze/review/audit verbs to reader bucket
+CLAUDE_REASONIX_GATEWAY_READ_RETRY_HOLLOW=1  # retry an empty summary-capped read lane
+CLAUDE_REASONIX_GATEWAY_LANE_FAIL_MARKER=1   # inject [LANE_FAILED] marker on lane failure
+CLAUDE_REASONIX_GATEWAY_OVERSCOPE_REJECT=1   # reject bulk "read everything" over-scoped lanes
+```
+
+The MCP settings in the Defaults section above (`REASONIX_FLEET_MODEL`, `REASONIX_FLEET_REASONING`,
+`REASONIX_FLEET_DEFAULT_WORKERS`, etc.) are the other knobs for normal day-to-day tuning.
+
 ## Uninstall
 
 ```bash
@@ -125,11 +150,19 @@ machine no separate key export is needed.
 claude and node are left untouched (the installer never installed them). There is no
 in-place engine patch to revert — the engine is bundled, not patched into another tool.
 
+## Advanced configuration
+
+≈70 further internal/experimental levers exist (cache-tuning, prime-gate, prefetch,
+output-discipline, etc.) — all default-OFF and not needed for normal use. See
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference.
+
 ## Layout
 
 ```
 bin/claude-reasonix          the launcher
-reasonix-native-gateway.py   local Anthropic-compatible gateway (reasonix_cli provider)
+reasonix-native-gateway.py   thin shim (kept for the stable import path)
+reasonix_gateway/            the gateway package: env, text, harness, cost,
+                             levers, engine_seam, server modules
 reasonix-fleet-mcp.py        the reasonix_fleet MCP server (batch + worker tools)
 hooks/                       Workflow rewrite + subagent-policy hooks
 bridge-settings.json         Claude settings template (__INSTALL_HOME__ rendered at run)
