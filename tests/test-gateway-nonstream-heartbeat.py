@@ -160,7 +160,7 @@ def test_heartbeat_fires_before_slow_producer_returns():
         h.do_POST()
         out = h.out
         # At least one heartbeat delta (single space) should appear given a
-        # 2.5s producer block and 1s keepalive interval.
+        # 3.5s producer block and the 1.0s keepalive interval (~3 deltas expected).
         expect(out.count("content_block_delta") >= 1,
                f"expected >=1 heartbeat delta during a slow producer. Got count={out.count('content_block_delta')}")
     finally:
