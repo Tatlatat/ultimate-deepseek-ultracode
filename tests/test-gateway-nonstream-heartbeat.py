@@ -143,8 +143,8 @@ def test_heartbeat_fires_before_slow_producer_returns():
     heartbeat delta must reach the wire BEFORE the producer finishes — that is
     exactly what keeps the 180s watchdog from firing."""
     import os
-    os.environ["CLAUDE_REASONIX_GATEWAY_STREAM_KEEPALIVE_SECONDS"] = "1"
-    restore = install_fake_reasonix(block_secs=2.5)
+    os.environ["CLAUDE_REASONIX_GATEWAY_STREAM_KEEPALIVE_SECONDS"] = "0.2"
+    restore = install_fake_reasonix(block_secs=2.0)
     try:
         body = json.dumps({
             "model": "claude-reasonix-flash", "max_tokens": 16,
