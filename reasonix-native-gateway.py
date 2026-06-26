@@ -125,8 +125,55 @@ def lane_acceptance_test(messages: Any) -> str:
     for line in txt.splitlines():
         s = line.strip()
         if s.upper().startswith("ACCEPTANCE_TEST:"):
-            return s.split(":", 1)[1].strip()
+            return _clean_acceptance_command(s.split(":", 1)[1].strip())
     return ""
+
+
+# Prose-markers the model tends to APPEND to (or wrap) an ACCEPTANCE_TEST command
+# (measured on the deno_lint run): "cargo test --lib x passes WITH the added cases",
+# "cargo test x (must pass) AND cargo check (must stay green)". lane_acceptance_test
+# fed the WHOLE tail to the shim execSync -> `cargo test x passes ...` -> "unexpected
+# argument 'passes'" -> the acceptance FAILED for a spurious reason and the lane
+# stagnated though the code was correct. We extract just the runnable command(s).
+_PROSE_CUT_RE = re.compile(
+    r"\s+(?:passes\b|should\b|must\b|to (?:verify|confirm|ensure)\b|with the\b|"
+    r"and (?:confirm|verify|ensure|it )\b)",
+    re.I)
+
+
+def _clean_acceptance_command(raw: str) -> str:
+    """Extract the runnable shell command from an ACCEPTANCE_TEST value the model may
+    have polluted with prose. Strategy: unwrap backticks/quotes; split on ' AND ' into
+    candidate commands; from each, drop a trailing parenthetical "(must pass)" and any
+    prose tail starting at a prose-marker; keep candidates that look like a command
+    (contain a known runner or a '/'); join multiple with '&&'. Falls back to the
+    cut-at-first-prose-marker of the whole string if nothing parses."""
+    raw = raw.strip()
+    # unwrap a single surrounding backtick/quote pair
+    if len(raw) >= 2 and raw[0] in "`'\"" and raw[-1] == raw[0]:
+        raw = raw[1:-1].strip()
+    runners = ("bun ", "cargo ", "npm ", "pnpm ", "yarn ", "node ", "deno ",
+               "pytest", "python ", "go ", "make ", "jest", "vitest", "./")
+    def _looks_cmd(c: str) -> bool:
+        cl = c.lower()
+        return any(cl.startswith(r) or (" " + r) in (" " + cl) for r in runners)
+    parts = re.split(r"\s+\bAND\b\s+", raw, flags=re.I)
+    cleaned = []
+    for p in parts:
+        p = p.strip()
+        p = re.sub(r"\s*\([^)]*\)\s*$", "", p).strip()   # drop trailing "(must pass)"
+        cut = _PROSE_CUT_RE.search(p)
+        if cut:
+            p = p[:cut.start()].strip()
+        p = re.sub(r"\s*\([^)]*\)\s*$", "", p).strip()   # again after the cut
+        if p and _looks_cmd(p):
+            cleaned.append(p)
+    if cleaned:
+        return " && ".join(cleaned)
+    # fallback: cut the whole string at the first prose marker / trailing paren
+    p = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
+    cut = _PROSE_CUT_RE.search(p)
+    return (p[:cut.start()].strip() if cut else p)
 
 
 # --- Lever D — pre-index (CLAUDE_REASONIX_PREINDEX, default OFF) ----------------
@@ -1692,6 +1739,25 @@ def _strip_injected_guide(text: str) -> str:
     return (text[:start] + text[end:]).strip()
 
 
+# A bulk-scope phrase that is NEGATED is a SCOPE-NARROWING instruction, not an
+# over-broad lane: "read ONLY these files, do NOT read the whole repo" tells the lane
+# to stay narrow. Without this, the bulk regex matched "the whole repo" inside the
+# negation and rejected a perfectly narrow lane (measured on the deno_lint run).
+_NEGATION_RE = re.compile(r"\b(do not|don'?t|never|avoid|without|rather than|not)\b",
+                          re.I)
+
+
+def _bulk_scope_match(pt: str) -> bool:
+    """True only for a GENUINE over-broad scope phrase. A bulk phrase preceded (within
+    a short window) by a negation is treated as scope-narrowing and does NOT count."""
+    for m in _OVERSCOPE_BULK_RE.finditer(pt):
+        head = pt[max(0, m.start() - 40):m.start()]
+        if _NEGATION_RE.search(head):
+            continue  # negated bulk phrase = "do not <bulk>" = narrowing, not over-broad
+        return True
+    return False
+
+
 def overscope_rejection(task_text: str, cwd: str | None) -> str | None:
     """None unless OVERSCOPE_REJECT is on AND the lane is over-broad (a bulk
     non-enumerable scope phrase, OR > max-files distinct named files). When it fires,
@@ -1702,7 +1768,7 @@ def overscope_rejection(task_text: str, cwd: str | None) -> str | None:
     # _strip_injected_guide): the guide's "every file under review" / "everything in
     # one context" phrases would otherwise reject every lane as bulk scope.
     pt = _strip_injected_guide(task_text or "")
-    bulk = bool(_OVERSCOPE_BULK_RE.search(pt))
+    bulk = _bulk_scope_match(pt)
     n = lane_file_scope_count(pt, cwd)
     if not bulk and n <= _overscope_max_files():
         return None
