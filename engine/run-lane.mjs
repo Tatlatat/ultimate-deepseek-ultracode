@@ -134,7 +134,15 @@ if (typeof loadEndpoint === "function") {
     /* fall through to env-only */
   }
 }
-const apiKey = process.env.DEEPSEEK_API_KEY || endpoint.apiKey;
+// In MOCK mode the engine never calls DeepSeek (every path mock-returns), but the
+// DeepSeekClient constructor still throws if no key is resolvable. On a clean CI
+// runner (no DEEPSEEK_API_KEY, no ~/.reasonix/config.json) that would break the
+// mock-engine tests that drive the harness path. So when MOCK is on and no real key
+// exists, hand the client a placeholder so it CONSTRUCTS — it is never used for a
+// request. This only affects the mock path; with a real key it is byte-identical.
+const _mockNoKey = process.env.REASONIX_ENGINE_MOCK === "1"
+  && !(process.env.DEEPSEEK_API_KEY || endpoint.apiKey);
+const apiKey = process.env.DEEPSEEK_API_KEY || endpoint.apiKey || (_mockNoKey ? "mock-no-network" : undefined);
 const baseUrl = process.env.DEEPSEEK_BASE_URL || endpoint.baseUrl;
 
 const rootDir = req.rootDir || process.cwd();
