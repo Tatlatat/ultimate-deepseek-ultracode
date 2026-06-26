@@ -33,8 +33,8 @@ The installer checks these and tells you what's missing; it never installs them 
 ## Install
 
 ```bash
-git clone https://github.com/<you>/claude-reasonix-fleet.git
-cd claude-reasonix-fleet
+git clone https://github.com/Tatlatat/ultimate-deepseek-ultracode.git
+cd ultimate-deepseek-ultracode
 ./install.sh
 ```
 
