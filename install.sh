@@ -45,13 +45,45 @@ NODE_BIN="$(command -v node 2>/dev/null || true)"
 ok "node — $NODE_BIN"
 
 # DeepSeek auth: the engine authenticates with DEEPSEEK_API_KEY, or falls back to
-# ~/.reasonix/config.json (the DeepSeek login). One of them must be present.
+# ~/.reasonix/config.json (the `apiKey` field the bundled engine reads). One must
+# be present. A first-time user (the OSS case) has neither — so if we have a TTY,
+# prompt for the key and save it to ~/.reasonix/config.json (the path the engine
+# already reads). Non-interactive (CI/piped) installs still fail loudly with a
+# clear instruction, since we cannot prompt.
+REASONIX_CONFIG="$HOME/.reasonix/config.json"
 if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   ok "DeepSeek auth — DEEPSEEK_API_KEY (env)"
-elif [ -f "$HOME/.reasonix/config.json" ]; then
-  ok "DeepSeek auth — ~/.reasonix/config.json"
+elif [ -f "$REASONIX_CONFIG" ] && python3 -c "import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get('apiKey') else 1)" "$REASONIX_CONFIG" 2>/dev/null; then
+  ok "DeepSeek auth — $REASONIX_CONFIG"
+elif [ -t 0 ]; then
+  # First-run setup: no key found and we have an interactive terminal. Prompt and
+  # persist to ~/.reasonix/config.json so the engine picks it up on every run.
+  say "No DeepSeek API key found. Get one at https://platform.deepseek.com/api_keys"
+  printf '    Paste your DeepSeek API key (or set DEEPSEEK_API_KEY and re-run): '
+  read -r _deepseek_key
+  [ -n "$_deepseek_key" ] || die "No key entered. Set DEEPSEEK_API_KEY or re-run and paste a key."
+  mkdir -p "$(dirname "$REASONIX_CONFIG")"
+  # Merge into an existing config if present, else create one — write ONLY the
+  # apiKey field, preserving any other keys; chmod 600 (it holds a secret).
+  REASONIX_CONFIG="$REASONIX_CONFIG" _DK="$_deepseek_key" python3 - <<'PY' || die "failed to write $REASONIX_CONFIG"
+import json, os
+path = os.environ["REASONIX_CONFIG"]
+key = os.environ["_DK"].strip()
+cfg = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            cfg = json.load(f) or {}
+    except Exception:
+        cfg = {}
+cfg["apiKey"] = key
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+os.chmod(path, 0o600)
+PY
+  ok "DeepSeek key saved to $REASONIX_CONFIG"
 else
-  die "No DeepSeek credential. Set DEEPSEEK_API_KEY, or log in so ~/.reasonix/config.json exists, then re-run."
+  die "No DeepSeek credential. Set DEEPSEEK_API_KEY (or put your key in $REASONIX_CONFIG as {\"apiKey\": \"...\"}), then re-run. Get a key at https://platform.deepseek.com/api_keys"
 fi
 
 # ----------------------------------------------------------------------------

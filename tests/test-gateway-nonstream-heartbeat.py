@@ -74,14 +74,30 @@ class FakeHandler(gw.Handler):
 
 
 def install_fake_reasonix(registry_model="claude-reasonix-flash", block_secs=0.0):
-    """Force a reasonix_cli registry entry and stub out run_reasonix_acp."""
-    orig_registry = gw.model_registry
-    orig_run_reasonix_acp = gw.run_reasonix_acp
+    """Force a reasonix_cli registry entry and stub out run_reasonix_acp.
+
+    The gateway is now a package: `call_openai_chat_completion` (which the SSE handler
+    calls for a reasonix_cli model) looks up `run_reasonix_acp` in the `engine_seam`
+    module's OWN namespace, and the SSE handler looks up `model_registry` in the
+    `server` module's namespace — NOT the re-exported names on the shim (`gw.X`). So
+    we patch the REAL owning modules (and the shim, for any direct callers). Patching
+    only `gw.X` after the refactor was a no-op — the handler kept calling the real
+    DeepSeek bridge, which only "worked" on a machine with a live credential.
+    """
+    import reasonix_gateway.engine_seam as _es
+    import reasonix_gateway.server as _srv
+
+    orig = {
+        ("gw", "model_registry"): gw.model_registry,
+        ("gw", "run_reasonix_acp"): gw.run_reasonix_acp,
+        ("es", "run_reasonix_acp"): _es.run_reasonix_acp,
+        ("srv", "model_registry"): _srv.model_registry,
+    }
 
     def fake_registry():
         return {registry_model: {"provider": "reasonix_cli"}}
 
-    def fake_run_reasonix_acp(prompt, config, max_output_tokens=None):
+    def fake_run_reasonix_acp(prompt, config, max_output_tokens=None, **kwargs):
         if block_secs:
             time.sleep(block_secs)
         return ("PONG", {
@@ -93,8 +109,15 @@ def install_fake_reasonix(registry_model="claude-reasonix-flash", block_secs=0.0
 
     gw.model_registry = fake_registry
     gw.run_reasonix_acp = fake_run_reasonix_acp
-    return lambda: (setattr(gw, "model_registry", orig_registry),
-                    setattr(gw, "run_reasonix_acp", orig_run_reasonix_acp))
+    _es.run_reasonix_acp = fake_run_reasonix_acp
+    _srv.model_registry = fake_registry
+
+    def restore():
+        gw.model_registry = orig[("gw", "model_registry")]
+        gw.run_reasonix_acp = orig[("gw", "run_reasonix_acp")]
+        _es.run_reasonix_acp = orig[("es", "run_reasonix_acp")]
+        _srv.model_registry = orig[("srv", "model_registry")]
+    return restore
 
 
 def test_nonstream_reasonix_emits_heartbeat():

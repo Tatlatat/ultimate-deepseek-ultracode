@@ -19,6 +19,14 @@ import sys
 import time
 from pathlib import Path
 
+# LIVE test: this fires real DeepSeek lanes through run_reasonix_acp to measure
+# actual cache%. It needs a real DeepSeek credential + network, so it is OPT-IN:
+# it runs only when REASONIX_LIVE_TESTS=1 (set when you want a live cache check).
+# The offline CI suite (tests/run-all.sh) does NOT set it, so this skips cleanly.
+if os.environ.get("REASONIX_LIVE_TESTS") not in {"1", "true", "yes", "on"}:
+    print("SKIP: live DeepSeek test (set REASONIX_LIVE_TESTS=1 to run)")
+    sys.exit(0)
+
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("gw", ROOT / "reasonix-native-gateway.py")
 gw = importlib.util.module_from_spec(spec)
