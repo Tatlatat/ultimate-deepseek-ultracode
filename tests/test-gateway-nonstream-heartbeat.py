@@ -143,8 +143,14 @@ def test_heartbeat_fires_before_slow_producer_returns():
     heartbeat delta must reach the wire BEFORE the producer finishes — that is
     exactly what keeps the 180s watchdog from firing."""
     import os
+    # NOTE: the gateway floors the keepalive interval at 1.0s (server.py
+    # `max(1.0, ...)`), so a sub-second value here is clamped to 1.0s. To keep this
+    # test DETERMINISTIC (not a wall-clock race), the producer block must be several
+    # whole keepalive intervals long: keepalive=1.0s, block=3.5s → heartbeats fire at
+    # ~1s/2s/3s (≈3 deltas) before the producer returns at 3.5s, so `>=1` holds with a
+    # wide margin even on a slow/loaded CI runner.
     os.environ["CLAUDE_REASONIX_GATEWAY_STREAM_KEEPALIVE_SECONDS"] = "1"
-    restore = install_fake_reasonix(block_secs=2.5)
+    restore = install_fake_reasonix(block_secs=3.5)
     try:
         body = json.dumps({
             "model": "claude-reasonix-flash", "max_tokens": 16,
@@ -154,7 +160,7 @@ def test_heartbeat_fires_before_slow_producer_returns():
         h.do_POST()
         out = h.out
         # At least one heartbeat delta (single space) should appear given a
-        # 2.5s producer block and 1s keepalive interval.
+        # 3.5s producer block and the 1.0s keepalive interval (~3 deltas expected).
         expect(out.count("content_block_delta") >= 1,
                f"expected >=1 heartbeat delta during a slow producer. Got count={out.count('content_block_delta')}")
     finally:
