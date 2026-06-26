@@ -10,6 +10,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import time as _time
@@ -127,8 +129,6 @@ def build_preindex(cwd: str | None = None) -> bool:
     """Lever D: build the semantic index ONCE for `cwd`. Returns True iff an index
     was built. FAIL-OPEN — never raises; logs and returns False on any problem
     (PREINDEX off, no node, no engine dist, no embedding model, timeout, error)."""
-    import subprocess
-    import sys
     if not preindex_enabled():
         return False
     root = os.path.abspath(cwd or env_first(
@@ -180,7 +180,7 @@ def gateway_trace(event: str, **fields: Any) -> None:
     if os.getenv("CLAUDE_REASONIX_GATEWAY_TRACE", os.getenv("CLAUDE_CODEX_GATEWAY_TRACE", "")).lower() not in {"1", "true", "yes", "on"}:
         return
     record = {"time": time.time(), "event": event, **fields}
-    print(json.dumps(record, ensure_ascii=False, sort_keys=True), file=__import__("sys").stderr, flush=True)
+    print(json.dumps(record, ensure_ascii=False, sort_keys=True), file=sys.stderr, flush=True)
 
 
 def reasonix_cli_semaphore() -> threading.BoundedSemaphore:

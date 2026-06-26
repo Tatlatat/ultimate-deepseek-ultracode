@@ -664,11 +664,6 @@ def tool_names_from_payload(payload: JSON) -> list[str]:
     ]
 
 
-def is_structured_output_tool_name(name: str) -> bool:
-    normalized = "".join(ch for ch in name.lower() if ch.isalnum())
-    return normalized == "structuredoutput" or normalized.endswith("structuredoutput")
-
-
 def structured_output_success_text(content: Any) -> bool:
     return "structured output provided successfully" in text_from_content(content).lower()
 
