@@ -22,7 +22,7 @@ def lane_unverified_reply(reason: str) -> str:
             "keep the item and re-run with a smaller scope.")
 
 
-# --- C3: weak-executor harness helpers (CLAUDE_REASONIX_GATEWAY_LANE_HARNESS, default OFF) ---
+# --- C3: weak-executor harness helpers (CLAUDE_REASONIX_GATEWAY_LANE_HARNESS, default ON) ---
 # The shim (engine/run-lane.mjs) runs an acceptance-test retry loop and returns a
 # terse `__HARNESS__:<status>:<attempts>:<lesson>` text.  The gateway parses it into
 # a SHORT structured lane reply (<200 chars) so the Opus orchestrator reviews only
@@ -31,7 +31,7 @@ def lane_unverified_reply(reason: str) -> str:
 
 def _lane_harness_on() -> bool:
     return env_truthy("CLAUDE_REASONIX_GATEWAY_LANE_HARNESS",
-                      "CLAUDE_CODEX_GATEWAY_LANE_HARNESS", default="0")
+                      "CLAUDE_CODEX_GATEWAY_LANE_HARNESS", default="1")
 
 
 def parse_harness_result(text: str) -> JSON | None:

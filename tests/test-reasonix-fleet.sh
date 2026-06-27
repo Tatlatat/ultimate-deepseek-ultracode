@@ -521,12 +521,21 @@ payload = {
         "script": "phase('Test')\nconst result = await agent('inspect repo', { label: 'inspect', phase: 'Test' })\nreturn result\n",
     },
 }
+# Hermetic: this case asserts the DEFAULT (fleet) routing, so the hook must run
+# WITHOUT any WORKFLOW_MODE override. When this suite runs INSIDE a live reasonix
+# session, that session exports CLAUDE_CODEX_WORKFLOW_MODE=native into the
+# environment; inheriting it would flip the hook to native and make this fleet-mode
+# assertion a FALSE-POSITIVE failure (observed in a real fan-out run). Strip both the
+# legacy and current mode vars so the hook falls back to its own default ("fleet").
+_clean_env = {k: v for k, v in os.environ.items()
+              if k not in ("CLAUDE_CODEX_WORKFLOW_MODE", "CLAUDE_REASONIX_WORKFLOW_MODE")}
 proc = subprocess.run(
     [sys.executable, sys.argv[1]],
     input=json.dumps(payload),
     text=True,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
+    env=_clean_env,
     check=True,
 )
 out = json.loads(proc.stdout)

@@ -411,6 +411,25 @@ run_claude_with_fleet() {
     --append-system-prompt "$prompt"
   )
 
+  # Block the third-party context-mode plugin's ctx_* tools inside a fleet session.
+  # MEASURED: context-mode drove ~79 ctx_* calls in an 82-line transcript, each re-
+  # injecting large tool output -> the context refilled to the limit within a few
+  # turns and autocompact thrashed (3× in a row), forcing a /clear mid-task. The
+  # plugin is unrelated to the fleet; a fan-out session that re-reads files per lane
+  # already manages its own context. Default ON; set CLAUDE_REASONIX_KEEP_CONTEXT_MODE=1
+  # to keep the plugin available in a fleet session. No effect if the plugin isn't
+  # installed (the disallow pattern simply matches nothing).
+  #
+  # IMPORTANT: this is the context-mode block ONLY. It must NEVER carry Agent,Task —
+  # native gateway mode RELIES on the native subagent (Agent) path for fan-out, so the
+  # native branch passes only this var, never "Agent,Task". The fleet branch adds
+  # Agent,Task itself (MCP-worker mode, no native subagents).
+  local _ctx_block=""
+  case "${CLAUDE_REASONIX_KEEP_CONTEXT_MODE:-0}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) _ctx_block="mcp__plugin_context-mode_context-mode__*" ;;
+  esac
+
   if native_subagents_enabled; then
     local agent_defs
     agent_defs="$(agents_json)"
@@ -429,6 +448,7 @@ run_claude_with_fleet() {
       "$CLAUDE_BIN" \
         "${base_args[@]}" \
         --agents "$agent_defs" \
+        ${_ctx_block:+--disallowedTools "$_ctx_block"} \
         "$@"
     local code=$?
     set -e
@@ -440,7 +460,7 @@ run_claude_with_fleet() {
     CLAUDE_CODEX_WORKFLOW_MODE=fleet \
     "$CLAUDE_BIN" \
     "${base_args[@]}" \
-    --disallowedTools "Agent,Task" \
+    --disallowedTools "Agent,Task${_ctx_block:+,$_ctx_block}" \
     "$@"
 }
 
