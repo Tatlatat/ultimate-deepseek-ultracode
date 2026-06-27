@@ -14,25 +14,54 @@ the agent and let it work — do not absorb it yourself.
 
 **Look at the task → look at the agent first → if the agent can do it, the agent does it.**
 
-### ALWAYS delegate to a Reasonix agent (these are the agent's job)
+### THE DECIDING RULE — multi-step / planned work MUST go to agents
+
+The line is NOT how big each piece is. It is whether the work is a *single quick
+edit* or a *sequence*. Decide by this rule, in order:
+
+1. **Following a plan, or a multi-step / multi-file task?** → MANDATORY fan-out.
+   The MOMENT the work has more than one step — a written plan, a task list, a
+   numbered set of changes, "first X then Y", touching several files, or a
+   refactor that ripples — you MUST dispatch it to agents / a Workflow fan-out.
+   Do NOT execute the steps yourself one by one inline. This is the exact failure
+   to avoid: running a plan's Task 1, Task 2, Task 3… by hand. A plan is a
+   fan-out spec, not your to-do list.
+2. **A chain of small edits** (even if each edit is tiny) → fan-out. Several
+   small changes in a row is a sequence, not a quick edit.
+3. **One genuinely small, self-contained edit** (a typo, a single-line fix, one
+   value change, reading one file to answer a question) → inline is fine.
+
+So: small-and-single = inline OK. Many-small, or any-planned, or multi-step =
+agents, always.
+
+### ALWAYS delegate / fan-out (the agent's job)
+- Executing ANY plan or task list (one lane per task — never run them by hand)
 - Writing a new file / module / class / function
-- Implementing something from a clear spec
+- Implementing something from a spec
 - Fixing a bug that has a concrete description
-- Local refactor of a single file
+- A refactor that spans more than one file, or a chain of edits
 - Research / web lookup / fact-finding (web search is built into the lane)
 - Writing tests for existing code
 
-### Claude keeps these (do them yourself)
-- Planning / breaking work into pieces
-- Reviewing what an agent produced
-- Architecture decisions and trade-offs
-- Tiny 1–2 line edits (faster to just do than to delegate)
-- Reading / navigating the codebase to build context
+### Claude keeps these (do them yourself, inline)
+- Planning / breaking work into pieces, and DISPATCHING it (then agents execute)
+- Reviewing what an agent produced; deciding architecture / trade-offs
+- ONE small self-contained edit (a single ≤2-line change that is the whole task)
+- Reading the few files needed to scope or dispatch — NOT to then do the work
 - Conversational answers to the user
 
-When a task is in the "always delegate" list, do NOT start writing the code
-yourself — dispatch a Reasonix lane. Default is delegate; self-doing is the
-exception, reserved for the "Claude keeps these" list.
+### Banned excuses — do NOT use these to skip delegation
+These rationalizations are FORBIDDEN. If you catch yourself writing any of them,
+stop and dispatch instead:
+- "it's faster to just do it myself" / "lower-risk to do inline"
+- "I already have the content/context, so I'll write it directly"
+- "this is just scoping/reading" — when you then keep going and do the task
+- "the lane would re-derive what I know" — dispatch it anyway, with what you know
+
+Default is delegate. Self-doing is the narrow exception in "Claude keeps these":
+a single small edit, planning, review, or a conversational reply. Everything that
+is a sequence or follows a plan goes to agents — no matter how confident or
+well-prepared you feel.
 
 ## How to split work for Reasonix lanes — DECOMPOSE FINELY (this is the #1 lever)
 A Reasonix lane is DeepSeek-flash. It is fast and accurate on a SMALL, SHARP task
