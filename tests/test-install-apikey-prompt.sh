@@ -12,6 +12,21 @@ check() {  # $1 = label ; $2 = condition already evaluated (0/1 via [ ] before c
   else echo "  FAIL $1"; fail=$((fail+1)); fi
 }
 
+# Portable octal file-permission. GNU `stat -c` (Linux/CI) and BSD `stat -f` (macOS)
+# use different flags. CRUCIAL: on Linux, BSD-style `stat -f '%Lp'` does NOT error —
+# GNU stat treats -f as "filesystem info" and prints a whole block, so a
+# `stat -f ... || stat -c ...` chain silently captures that garbage instead of the
+# mode. Try GNU first (it errors cleanly on macOS, triggering the fallback), and
+# only accept a 3-4 digit octal result.
+_perm() {  # $1 = path -> echoes octal mode (e.g. 600), empty on failure
+  local p
+  p=$(stat -c '%a' "$1" 2>/dev/null)
+  case "$p" in
+    [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) printf '%s' "$p"; return 0 ;;
+  esac
+  stat -f '%Lp' "$1" 2>/dev/null
+}
+
 # ---- Case 1: interactive (TTY emulated by piping), no key -> prompt -> saves apiKey ----
 T1="$(mktemp -d)"
 HOME="$T1" CLAUDE_REASONIX_FLEET_INSTALL_HOME="$T1/ih" CLAUDE_REASONIX_BIN_DIR="$T1/bin" \
@@ -40,7 +55,7 @@ os.chmod(path, 0o600)
 PY
 [ -f "$T1b/.reasonix/config.json" ]; check "config.json created" $?
 python3 -c "import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))['apiKey']=='sk-test-12345' else 1)" "$T1b/.reasonix/config.json"; check "apiKey saved correctly" $?
-perm=$(stat -f '%Lp' "$T1b/.reasonix/config.json" 2>/dev/null || stat -c '%a' "$T1b/.reasonix/config.json" 2>/dev/null)
+perm=$(_perm "$T1b/.reasonix/config.json")
 [ "$perm" = "600" ]; check "config.json is chmod 600 (secret)" $?
 
 # Case 1c: merge — an existing config keeps its other fields when the key is written.
