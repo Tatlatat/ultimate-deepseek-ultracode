@@ -15,4 +15,8 @@ jobs:
         with:
           node-version: lts/*
       - name: Run test suite (offline, mock mode)
+        # The CI runner has no Claude Code CLI (it only checks install STRUCTURE,
+        # not a real session), so let install.sh skip ONLY its `claude` probe.
+        env:
+          CLAUDE_REASONIX_SKIP_CLAUDE_CHECK: "1"
         run: bash tests/run-all.sh

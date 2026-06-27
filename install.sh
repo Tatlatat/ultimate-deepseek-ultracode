@@ -33,9 +33,17 @@ command -v python3 >/dev/null 2>&1 \
   || die "python3 not found. Install Python 3.8+ and re-run."
 ok "python3 — $(command -v python3)"
 
-command -v claude >/dev/null 2>&1 \
-  || die "Claude Code CLI ('claude') not found. Install it (https://claude.com/claude-code) and re-run."
-ok "claude — $(command -v claude)"
+# The Claude Code CLI is required for real use, but a CI runner that only checks the
+# install STRUCTURE (file copy, launcher wiring, uninstall) has no reason to install
+# Claude Code. CLAUDE_REASONIX_SKIP_CLAUDE_CHECK=1 lets such a runner skip ONLY this
+# probe; a real user never sets it, so their install is unchanged.
+if [ -n "${CLAUDE_REASONIX_SKIP_CLAUDE_CHECK:-}" ]; then
+  warn "claude — check skipped (CLAUDE_REASONIX_SKIP_CLAUDE_CHECK set)"
+else
+  command -v claude >/dev/null 2>&1 \
+    || die "Claude Code CLI ('claude') not found. Install it (https://claude.com/claude-code) and re-run."
+  ok "claude — $(command -v claude)"
+fi
 
 # node: the bundled fork engine is driven in-process via the Node shim
 # engine/run-lane.mjs, so node is REQUIRED (no upstream reasonix).
