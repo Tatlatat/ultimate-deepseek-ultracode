@@ -145,8 +145,8 @@ def test_case2_flag_off_byte_inert():
         env = {
             **BASE_ENV,
             "REASONIX_ENGINE_MOCK_TEXT": mock_text,
-            # NO CLAUDE_REASONIX_GATEWAY_LANE_HARNESS set
-            "CLAUDE_REASONIX_GATEWAY_LANE_HARNESS": None,  # explicit unset
+            # Harness defaults ON now -> set the flag to "0" to turn it OFF.
+            "CLAUDE_REASONIX_GATEWAY_LANE_HARNESS": "0",  # explicit off
             "CLAUDE_CODEX_GATEWAY_LANE_HARNESS": None,
             "REASONIX_FLEET_LOG_DIR": str(Path(cwd) / "logs"),
         }
