@@ -610,7 +610,34 @@ def main() -> int:
     if selfheal_context:
         additional_context = additional_context + "\n\n" + selfheal_context
     if os.getenv("CLAUDE_REASONIX_WORKFLOW_PREFIX_GUIDE", os.getenv("CLAUDE_CODEX_WORKFLOW_PREFIX_GUIDE", "1")).lower() in {"1", "true", "yes", "on"}:
-        additional_context = additional_context + "\n\n" + PREFIX_GUIDE_TEXT
+        # The guide is ~2060 tokens. Injecting it on EVERY workflow compounds: a
+        # session that fires many workflows back-to-back (research + a 10-task build)
+        # re-pays it each time, accelerating context growth toward the autocompact
+        # limit. Inject the FULL guide once per session (the first workflow warms the
+        # cache prefix), and a one-line reminder thereafter. Keyed by session_id via a
+        # marker file; if session_id is absent or the marker can't be written, fall
+        # back to always-full (fail-open, never lose the guidance).
+        _first = True
+        _sid = payload.get("session_id")
+        if _sid:
+            try:
+                _mark_dir = os.path.join(
+                    os.getenv("TMPDIR", "/tmp"), "reasonix-workflow-guide")
+                os.makedirs(_mark_dir, exist_ok=True)
+                _mark = os.path.join(_mark_dir, str(_sid))
+                if os.path.exists(_mark):
+                    _first = False
+                else:
+                    open(_mark, "w").close()
+            except Exception:
+                _first = True
+        if _first:
+            additional_context = additional_context + "\n\n" + PREFIX_GUIDE_TEXT
+        else:
+            additional_context = additional_context + (
+                "\n\n(claude-reasonix cache guidance was given earlier this session: "
+                "one lane = one file in the prompt prefix; tool-calling lanes cache "
+                "lower; decompose finely.)")
 
     # Lever E — speculative context prefetch, ADVISORY MODE (Q7). Predict + LOG the
     # files the lanes will read; ZERO prompt change. This runs AFTER updated and
