@@ -70,6 +70,8 @@ grep -qi "Agent-first policy\|Reasonix-first" "$RX_PROMPT" || fail "reasonix pro
 grep -qi "ALWAYS delegate" "$RX_PROMPT" || fail "reasonix prompt must list always-delegate task types"
 grep -qi "Claude keeps these" "$RX_PROMPT" || fail "reasonix prompt must list what Claude keeps doing"
 grep -qi "look at the agent first\|agent does it" "$RX_PROMPT" || fail "reasonix prompt must teach look-at-agent-first decision"
+grep -qi "one genuinely small" "$RX_PROMPT" && fail "conductor mode: the small-edit loophole line must be removed"
+grep -qi "Banned excuses" "$RX_PROMPT" && fail "conductor mode: the Banned-excuses list must be removed (the hook enforces now)"
 
 python3 - "$ROOT/bridge-settings.json" "$WORKFLOW_HOOK" "$ROOT" <<'PY'
 import json
