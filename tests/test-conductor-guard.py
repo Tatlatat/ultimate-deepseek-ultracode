@@ -83,5 +83,19 @@ with tempfile.TemporaryDirectory() as td:
     code, _ = decide({"tool_name": "Edit", "tool_input": {"file_path": "x.py"}}, env)
     check("fail-open: no session_id -> allowed", code == 0)
 
+    # FINDING 2: flag ON + Bash mutating + no session_id -> fail-open (allow)
+    code, _ = decide({"tool_name": "Bash", "tool_input": {"command": "echo hi > file.txt"}}, env)
+    check("fail-open: Bash mutating + no session_id -> allowed", code == 0)
+
+# FINDING 1: non-dict JSON must exit 0 (subprocess test)
+import subprocess, json as _json
+for bad_input in ["null", "[]", '"hello"', "42"]:
+    result = subprocess.run(
+        ["python3", os.path.join(ROOT, "hooks", "conductor-guard.py")],
+        input=bad_input, capture_output=True, text=True,
+        env={**os.environ, "CLAUDE_REASONIX_CONDUCTOR_REVIEW_ONLY": "1"},
+    )
+    check(f"fail-open: non-dict JSON {bad_input!r} exits 0", result.returncode == 0)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

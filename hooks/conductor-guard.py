@@ -90,6 +90,8 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return 0  # fail-open: malformed hook JSON must never block the user
+    if not isinstance(payload, dict):
+        return 0  # fail-open: valid but non-dict JSON (null, [], 42) must never crash
     code, msg = decide(payload)
     if code == 2:
         print(msg, file=sys.stderr)
