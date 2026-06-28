@@ -124,12 +124,21 @@ cm = conductor_matchers[0]
 for required_tool in ("Edit", "Write", "MultiEdit", "Bash"):
     if required_tool not in cm:
         raise SystemExit(f"conductor-guard matcher must contain {required_tool!r}: {cm!r}")
-# The conductor-guard must be the FIRST hook group in PreToolUse (so it fires before
-# the catch-all only-reasonix-fleet hook and cannot be bypassed).
+# Big-read guard must be wired on Read, and it is the FIRST PreToolUse group so it
+# fires before anything else (it stops Opus reading a huge file whole into context —
+# the measured autocompact-thrashing cause).
+big_read_matchers = [g.get("matcher", "") for g in settings.get("hooks", {}).get("PreToolUse", []) if any("big-read-guard.py" in h.get("command", "") for h in g.get("hooks", []))]
+if not big_read_matchers:
+    raise SystemExit("bridge settings must wire the big-read-guard hook")
+if "Read" not in big_read_matchers[0]:
+    raise SystemExit(f"big-read-guard matcher must contain 'Read': {big_read_matchers[0]!r}")
 first_group = settings.get("hooks", {}).get("PreToolUse", [{}])[0]
 first_group_cmds = [h.get("command", "") for h in first_group.get("hooks", [])]
-if not any("conductor-guard.py" in c for c in first_group_cmds):
-    raise SystemExit("conductor-guard must be the FIRST entry in the PreToolUse array")
+if not any("big-read-guard.py" in c for c in first_group_cmds):
+    raise SystemExit("big-read-guard must be the FIRST entry in the PreToolUse array")
+# The conductor-guard must still be wired (it need not be first now that big-read is).
+if not any("conductor-guard.py" in c for c in hook_cmds):
+    raise SystemExit("conductor-guard hook must still be wired")
 PY
 
 tmp_home="$(mktemp -d)"
