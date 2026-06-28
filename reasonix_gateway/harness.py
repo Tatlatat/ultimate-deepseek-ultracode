@@ -1,7 +1,20 @@
+import os as _os
 import re
 from typing import Any
 from .env import JSON, env_truthy
 from .text import lane_task_text
+
+
+def escalation_ledger_path(session_id):
+    """Absolute path to the per-session conductor escalation ledger, or None.
+
+    Both the conductor-guard hook (reads) and the gateway (appends) compute this
+    the same way so they agree on the file. Does NOT create the file. Returns None
+    for a falsy session_id (the caller then fails open — see conductor-guard.py)."""
+    if not session_id:
+        return None
+    tmp = _os.environ.get("TMPDIR") or "/tmp"
+    return _os.path.join(tmp, "reasonix-conductor-escalations", str(session_id))
 
 
 def _lane_fail_marker_on() -> bool:
