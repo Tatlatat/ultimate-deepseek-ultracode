@@ -99,6 +99,13 @@ if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
   # hook denies Opus's operator tools so work is delegated to the Reasonix fleet.
   # Pass through if set; never force-enable (measure-then-promote).
   [[ -n "${CLAUDE_REASONIX_CONDUCTOR_REVIEW_ONLY:-}" ]] && export CLAUDE_REASONIX_CONDUCTOR_REVIEW_ONLY
+  # Big-read guard (default ON inside the hook): blocks Opus from reading a huge
+  # file whole into its own context — the measured cause of autocompact thrashing
+  # (one 185K-token file = 93% of the window). A range read (offset/limit) passes;
+  # the hook tells Opus to read a range / grep / dispatch a lane instead. Pass the
+  # OFF switch + threshold override through if the user set them; default needs no export.
+  [[ -n "${CLAUDE_REASONIX_BIG_READ_GUARD:-}" ]] && export CLAUDE_REASONIX_BIG_READ_GUARD
+  [[ -n "${CLAUDE_REASONIX_BIG_READ_THRESHOLD_BYTES:-}" ]] && export CLAUDE_REASONIX_BIG_READ_THRESHOLD_BYTES
   # DeepSeek auth: pass DEEPSEEK_API_KEY through if the user set it. If not, the
   # in-process engine falls back to ~/.reasonix/config.json via loadEndpoint
   # (exactly how the old acp path authenticated), so no key is required on a
