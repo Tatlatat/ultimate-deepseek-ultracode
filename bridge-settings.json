@@ -12,6 +12,16 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 __INSTALL_HOME__/hooks/conductor-guard.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "Workflow",
         "hooks": [
           {

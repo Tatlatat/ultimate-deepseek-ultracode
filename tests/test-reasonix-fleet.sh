@@ -106,6 +106,14 @@ required = {
 }
 if not required.issubset(set(permissions)):
     raise SystemExit(f"bridge settings must allow Reasonix Fleet MCP tools: {permissions}")
+
+# Conductor guard must be wired on the operator tools (Edit/Write/MultiEdit/Bash).
+hook_cmds = [h.get("command", "") for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
+matchers = [g.get("matcher", "") for g in settings.get("hooks", {}).get("PreToolUse", [])]
+if not any("conductor-guard.py" in c for c in hook_cmds):
+    raise SystemExit("bridge settings must wire the conductor-guard hook")
+if not any("Edit" in m and "Write" in m for m in matchers):
+    raise SystemExit("conductor-guard must match Edit|Write|MultiEdit|Bash")
 PY
 
 tmp_home="$(mktemp -d)"
