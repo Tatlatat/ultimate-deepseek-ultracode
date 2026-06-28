@@ -109,5 +109,64 @@ with tempfile.TemporaryDirectory() as td:
     except Exception:
         check("record_escalation(None) no-raise", False)
 
+# --- Task 4: FIX F1 — bash_mutates covers cp/mv and the new mutating forms ---
+check("bash_mutates: cp a b -> True",   cg.bash_mutates("cp a b") is True)
+check("bash_mutates: mv a b -> True",   cg.bash_mutates("mv a b") is True)
+check("bash_mutates: dd if=... -> True", cg.bash_mutates("dd if=/dev/zero of=out bs=1M count=1") is True)
+check("bash_mutates: truncate -> True", cg.bash_mutates("truncate -s 0 file.txt") is True)
+check("bash_mutates: gsed -i -> True",  cg.bash_mutates("gsed -i 's/a/b/' f") is True)
+check("bash_mutates: git apply -> True", cg.bash_mutates("git apply patch.diff") is True)
+check("bash_mutates: git checkout -- -> True", cg.bash_mutates("git checkout -- src/foo.py") is True)
+# fail-open: read/test/grep/git-status must NOT match
+check("bash_mutates: git status -> False", cg.bash_mutates("git status") is False)
+check("bash_mutates: grep cp /etc -> False", cg.bash_mutates("grep cp /etc/hosts") is False)
+check("bash_mutates: pytest -> False", cg.bash_mutates("pytest tests/ -q") is False)
+check("bash_mutates: git diff -> False", cg.bash_mutates("git diff HEAD") is False)
+check("bash_mutates: git checkout branch -> False (no --)",
+      cg.bash_mutates("git checkout main") is False)
+
+# --- Task 5: FIX T2 — writer-discipline: pass -> no ledger, stagnated/exhausted -> ledger ---
+# Replicate the gate logic from engine_seam.py:
+#   if _hp.get("status") != "pass": record_escalation(session_id, text)
+# Test that the ACTUAL harness.record_escalation is NOT called for "pass"
+# and IS called for "stagnated"/"exhausted".
+from reasonix_gateway.harness import parse_harness_result, record_escalation
+
+with tempfile.TemporaryDirectory() as td:
+    os.environ["TMPDIR"] = td
+
+    # Build raw harness texts for each status (format: __HARNESS__:<status>:<attempts>:<lesson>)
+    harness_pass      = "__HARNESS__:pass:1:all green"
+    harness_stagnated = "__HARNESS__:stagnated:4:no progress"
+    harness_exhausted = "__HARNESS__:exhausted:4:budget exceeded"
+
+    # Simulate the engine_seam gate for each status:
+    def _simulate_gate(raw_text, session_id):
+        """Replicate the engine_seam decision: parse harness result, record only on non-pass."""
+        _hp = parse_harness_result(raw_text)
+        if _hp is not None and _hp.get("status") != "pass":
+            record_escalation(session_id, raw_text)
+
+    _simulate_gate(harness_pass, "sess-pass")
+    led_pass = _h.escalation_ledger_path("sess-pass")
+    check("writer-discipline: pass -> ledger NOT written",
+          led_pass is None or not os.path.isfile(led_pass) or os.path.getsize(led_pass) == 0)
+
+    _simulate_gate(harness_stagnated, "sess-stag")
+    led_stag = _h.escalation_ledger_path("sess-stag")
+    check("writer-discipline: stagnated -> ledger written",
+          led_stag is not None and os.path.isfile(led_stag) and os.path.getsize(led_stag) > 0)
+
+    _simulate_gate(harness_exhausted, "sess-exh")
+    led_exh = _h.escalation_ledger_path("sess-exh")
+    check("writer-discipline: exhausted -> ledger written",
+          led_exh is not None and os.path.isfile(led_exh) and os.path.getsize(led_exh) > 0)
+
+    # Non-harness text (normal lane reply) must NEVER write the ledger
+    _simulate_gate("some normal lane output without harness prefix", "sess-normal")
+    led_normal = _h.escalation_ledger_path("sess-normal")
+    check("writer-discipline: normal text -> ledger NOT written",
+          led_normal is None or not os.path.isfile(led_normal) or os.path.getsize(led_normal) == 0)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

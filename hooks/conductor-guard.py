@@ -14,10 +14,19 @@ _OPERATOR_TOOLS = {"Edit", "Write", "MultiEdit"}
 # Clearly file-mutating Bash. Conservative: anything not matched is treated as a
 # read/test/scope command and ALLOWED (fail-open).
 _BASH_WRITE_RE = re.compile(
-    r"(>>?)"            # output redirection > or >>
-    r"|\bsed\s+-i\b"    # in-place sed
-    r"|\btee\b"         # tee writes
-    r"|\bperl\s+-i\b",  # in-place perl
+    r"(>>?)"                  # output redirection > or >>
+    r"|\bsed\s+-i\b"          # in-place sed
+    r"|\bgsed\s+-i\b"         # in-place GNU sed (macOS brew)
+    r"|\btee\b"               # tee writes
+    r"|\bperl\s+-i\b"         # in-place perl
+    # cp/mv/dd/truncate matched only as the leading command token (after optional shell
+    # separators/sudo) so "grep cp ..." or "echo mv" are NOT matched (fail-open).
+    r"|(?:(?:^|;|&&|\|\||[|(]|\n)\s*(?:sudo\s+)?cp\s)"   # cp as command (spec §4.1)
+    r"|(?:(?:^|;|&&|\|\||[|(]|\n)\s*(?:sudo\s+)?mv\s)"   # mv as command (spec §4.1)
+    r"|(?:(?:^|;|&&|\|\||[|(]|\n)\s*(?:sudo\s+)?dd\s)"   # dd writes raw data
+    r"|(?:(?:^|;|&&|\|\||[|(]|\n)\s*(?:sudo\s+)?truncate\s)"  # truncate/resize files
+    r"|\bgit\s+apply\b"       # git apply patches (rewrites tracked files)
+    r"|\bgit\s+checkout\s+--\s",  # git checkout -- <path> reverts/overwrites files
 )
 
 

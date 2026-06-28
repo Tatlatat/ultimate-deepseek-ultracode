@@ -112,10 +112,24 @@ if not required.issubset(set(permissions)):
 # Conductor guard must be wired on the operator tools (Edit/Write/MultiEdit/Bash).
 hook_cmds = [h.get("command", "") for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
 matchers = [g.get("matcher", "") for g in settings.get("hooks", {}).get("PreToolUse", [])]
-if not any("conductor-guard.py" in c for c in hook_cmds):
+conductor_hook_cmds = [h.get("command", "") for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", []) if "conductor-guard.py" in h.get("command", "")]
+if not conductor_hook_cmds:
     raise SystemExit("bridge settings must wire the conductor-guard hook")
-if not any("Edit" in m and "Write" in m for m in matchers):
-    raise SystemExit("conductor-guard must match Edit|Write|MultiEdit|Bash")
+# The conductor-guard matcher must name ALL four operator-tool classes:
+# Edit, Write, MultiEdit (file-write tools) and Bash (for mutating shell commands).
+conductor_matchers = [g.get("matcher", "") for g in settings.get("hooks", {}).get("PreToolUse", []) if any("conductor-guard.py" in h.get("command", "") for h in g.get("hooks", []))]
+if not conductor_matchers:
+    raise SystemExit("conductor-guard hook group has no matcher")
+cm = conductor_matchers[0]
+for required_tool in ("Edit", "Write", "MultiEdit", "Bash"):
+    if required_tool not in cm:
+        raise SystemExit(f"conductor-guard matcher must contain {required_tool!r}: {cm!r}")
+# The conductor-guard must be the FIRST hook group in PreToolUse (so it fires before
+# the catch-all only-reasonix-fleet hook and cannot be bypassed).
+first_group = settings.get("hooks", {}).get("PreToolUse", [{}])[0]
+first_group_cmds = [h.get("command", "") for h in first_group.get("hooks", [])]
+if not any("conductor-guard.py" in c for c in first_group_cmds):
+    raise SystemExit("conductor-guard must be the FIRST entry in the PreToolUse array")
 PY
 
 tmp_home="$(mktemp -d)"

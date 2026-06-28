@@ -313,6 +313,11 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
         text, usage = run_reasonix_acp(
             prompt, config, max_output_tokens=_max_out,
             retry_empty_force=_retry_hollow, harness=_harness)
+        # FIX T1: a timed-out lane returns a LANE_UNVERIFIED: reply (from
+        # lane_unverified_reply inside run_reasonix_acp). Open the conductor valve
+        # so Opus can intervene on the stuck lane. Side-effect only — never raises.
+        if isinstance(text, str) and text.startswith("LANE_UNVERIFIED:"):
+            record_escalation(payload.get("session_id"), text)
         # C3: fold harness reply BEFORE populate_read_cache / ledger so the short
         # structured reply (not raw shim text) flows onward.
         _hp = parse_harness_result(text)
@@ -1209,6 +1214,11 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         text, usage = run_reasonix_acp(
             prompt, config, max_output_tokens=_max_out,
             retry_empty_force=_retry_hollow, harness=_harness)
+        # FIX T1: a timed-out lane returns a LANE_UNVERIFIED: reply (from
+        # lane_unverified_reply inside run_reasonix_acp). Open the conductor valve
+        # so Opus can intervene on the stuck lane. Side-effect only — never raises.
+        if isinstance(text, str) and text.startswith("LANE_UNVERIFIED:"):
+            record_escalation(payload.get("session_id"), text)
         # C3: fold harness reply BEFORE populate_read_cache / ledger.
         _hp = parse_harness_result(text)
         if _hp is not None:
