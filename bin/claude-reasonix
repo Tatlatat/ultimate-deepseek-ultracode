@@ -95,6 +95,10 @@ if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
   # exporting it here keeps the resolution explicit/observable.
   : "${REASONIX_ENGINE_DIST:=$INSTALL_HOME/vendor/reasonix-engine/dist/index.js}"
   export REASONIX_ENGINE_DIST
+  # Conductor mode (default OFF). When the user sets it to 1, the conductor-guard
+  # hook denies Opus's operator tools so work is delegated to the Reasonix fleet.
+  # Pass through if set; never force-enable (measure-then-promote).
+  [[ -n "${CLAUDE_REASONIX_CONDUCTOR_REVIEW_ONLY:-}" ]] && export CLAUDE_REASONIX_CONDUCTOR_REVIEW_ONLY
   # DeepSeek auth: pass DEEPSEEK_API_KEY through if the user set it. If not, the
   # in-process engine falls back to ~/.reasonix/config.json via loadEndpoint
   # (exactly how the old acp path authenticated), so no key is required on a

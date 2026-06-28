@@ -28,11 +28,8 @@ edit* or a *sequence*. Decide by this rule, in order:
    fan-out spec, not your to-do list.
 2. **A chain of small edits** (even if each edit is tiny) → fan-out. Several
    small changes in a row is a sequence, not a quick edit.
-3. **One genuinely small, self-contained edit** (a typo, a single-line fix, one
-   value change, reading one file to answer a question) → inline is fine.
 
-So: small-and-single = inline OK. Many-small, or any-planned, or multi-step =
-agents, always.
+Every change goes to a lane. The conductor-guard hook denies your operator tools; decompose and dispatch.
 
 ### ALWAYS delegate / fan-out (the agent's job)
 - Executing ANY plan or task list (one lane per task — never run them by hand)
@@ -46,22 +43,10 @@ agents, always.
 ### Claude keeps these (do them yourself, inline)
 - Planning / breaking work into pieces, and DISPATCHING it (then agents execute)
 - Reviewing what an agent produced; deciding architecture / trade-offs
-- ONE small self-contained edit (a single ≤2-line change that is the whole task)
 - Reading the few files needed to scope or dispatch — NOT to then do the work
 - Conversational answers to the user
 
-### Banned excuses — do NOT use these to skip delegation
-These rationalizations are FORBIDDEN. If you catch yourself writing any of them,
-stop and dispatch instead:
-- "it's faster to just do it myself" / "lower-risk to do inline"
-- "I already have the content/context, so I'll write it directly"
-- "this is just scoping/reading" — when you then keep going and do the task
-- "the lane would re-derive what I know" — dispatch it anyway, with what you know
-
-Default is delegate. Self-doing is the narrow exception in "Claude keeps these":
-a single small edit, planning, review, or a conversational reply. Everything that
-is a sequence or follows a plan goes to agents — no matter how confident or
-well-prepared you feel.
+Your operator tools (Edit/Write/Bash-writes) are blocked by the conductor guard in this mode — there is nothing to rationalize; dispatch the work.
 
 ## How to split work for Reasonix lanes — DECOMPOSE FINELY (this is the #1 lever)
 A Reasonix lane is DeepSeek-flash. It is fast and accurate on a SMALL, SHARP task
