@@ -23,7 +23,8 @@ from reasonix_gateway.env import JSON, env_first, env_int, env_float, env_truthy
 from reasonix_gateway.text import text_from_content, lane_task_text, json_bytes
 from reasonix_gateway.cost import append_reasonix_cost
 from reasonix_gateway.harness import (_lane_harness_on, lane_unverified_reply,
-    parse_harness_result, harness_lane_reply, lane_acceptance_test)
+    parse_harness_result, harness_lane_reply, lane_acceptance_test,
+    record_escalation)
 from reasonix_gateway.levers import (
     preindex_enabled, build_preindex, gateway_trace, reasonix_cli_semaphore,
     record_keepalive_prefix, read_cache_injection_block, populate_read_cache,
@@ -317,6 +318,12 @@ def call_openai_compatible(payload: JSON, requested_model: str, config: JSON) ->
         _hp = parse_harness_result(text)
         if _hp is not None:
             text = harness_lane_reply(_hp)
+            # Conductor-mode: record escalation/failure to the per-session ledger so
+            # the conductor-guard hook lifts Opus's edit block and lets it fix the
+            # broken lane. Side-effect only — never changes prompt bytes; no-op if
+            # session_id is absent or the write fails.
+            if _hp.get("status") != "pass":
+                record_escalation(payload.get("session_id"), text)
         # Lever C (default off): cache this lane's summary keyed by the file(s) it
         # read so later lanes on the same codebase reuse it (miss->hit). No-op when
         # the flag is off. Best-effort; never breaks the lane.
@@ -1206,6 +1213,12 @@ def call_openai_chat_completion(payload: JSON, requested_model: str, config: JSO
         _hp = parse_harness_result(text)
         if _hp is not None:
             text = harness_lane_reply(_hp)
+            # Conductor-mode: record escalation/failure to the per-session ledger so
+            # the conductor-guard hook lifts Opus's edit block and lets it fix the
+            # broken lane. Side-effect only — never changes prompt bytes; no-op if
+            # session_id is absent or the write fails.
+            if _hp.get("status") != "pass":
+                record_escalation(payload.get("session_id"), text)
         # Lever C (default off): populate the shared read-cache from this lane's
         # summary (see /v1/messages path). No-op when off; best-effort.
         populate_read_cache(prompt, text)

@@ -97,5 +97,17 @@ for bad_input in ["null", "[]", '"hello"', "42"]:
     )
     check(f"fail-open: non-dict JSON {bad_input!r} exits 0", result.returncode == 0)
 
+# --- Task 3: gateway records an escalation to the ledger ---
+with tempfile.TemporaryDirectory() as td:
+    os.environ["TMPDIR"] = td
+    _h.record_escalation("sess-esc", "LANE_ESCALATE: status=exhausted")
+    p = _h.escalation_ledger_path("sess-esc")
+    check("record_escalation wrote ledger", p and os.path.isfile(p) and os.path.getsize(p) > 0)
+    # no-op + no raise on falsy session
+    try:
+        _h.record_escalation(None, "x"); check("record_escalation(None) no-raise", True)
+    except Exception:
+        check("record_escalation(None) no-raise", False)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

@@ -17,6 +17,22 @@ def escalation_ledger_path(session_id):
     return _os.path.join(tmp, "reasonix-conductor-escalations", str(session_id))
 
 
+def record_escalation(session_id, note):
+    """Append an escalation note to the per-session conductor ledger so the
+    conductor-guard hook lifts the edit block (Opus may fix the broken lane).
+    No-op + never raises if session_id is falsy or the write fails — this runs
+    on the lane result path and must not break it."""
+    path = escalation_ledger_path(session_id)
+    if not path:
+        return
+    try:
+        _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write((note or "LANE_ESCALATE") + "\n")
+    except Exception:
+        pass
+
+
 def _lane_fail_marker_on() -> bool:
     return env_truthy("CLAUDE_REASONIX_GATEWAY_LANE_FAIL_MARKER",
                       "CLAUDE_CODEX_GATEWAY_LANE_FAIL_MARKER", default="1")
