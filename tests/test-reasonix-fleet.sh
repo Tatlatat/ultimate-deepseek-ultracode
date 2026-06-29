@@ -364,6 +364,22 @@ if grep -q -- "--strict-mcp-config" <<<"$bare_output"; then
   fail "bare claude-reasonix should not block normal MCP/plugins"
 fi
 grep -q "bare prompt" <<<"$bare_output" || fail "bare claude-reasonix should forward prompt"
+
+# --- silent-worker: the rendered settings carry outputStyle by default ---
+# Pull the --settings path out of the launcher's args, then read that file.
+sw_settings_path="$(sed -n 's/.*--settings \([^ ]*\).*/\1/p' <<<"$bare_output" | head -1)"
+[[ -f "$sw_settings_path" ]] || fail "silent-worker: could not find rendered settings path in launcher args"
+grep -q '"outputStyle": "silent-worker"' "$sw_settings_path" \
+  || fail "silent-worker: default reasonix session should set outputStyle:silent-worker"
+
+# --- silent-worker OFF switch: CLAUDE_REASONIX_SILENT=0 strips the key ---
+off_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 CLAUDE_REASONIX_SILENT=0 "$LAUNCHER" "bare prompt")"
+off_settings_path="$(sed -n 's/.*--settings \([^ ]*\).*/\1/p' <<<"$off_output" | head -1)"
+[[ -f "$off_settings_path" ]] || fail "silent-worker: could not find rendered settings path (OFF run)"
+if grep -q '"outputStyle"' "$off_settings_path"; then
+  fail "silent-worker: CLAUDE_REASONIX_SILENT=0 should remove outputStyle from rendered settings"
+fi
+
 plain_output="$("$LAUNCHER" plain "plain prompt")"
 if grep -q -- "--mcp-config" <<<"$plain_output"; then
   fail "plain mode should bypass fleet"
