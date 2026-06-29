@@ -65,20 +65,37 @@ volunteered reasoning are skippable → cut.
 
 ## 4. Architecture
 
-- **`output-styles/silent-worker.md`** — new file shipped in the fleet. Defines the minimal-talk
-  behavior with the §3 boundary. It is an output-style document (replaces the response-behavior
-  section), NOT an appended sentence.
-- **`bridge-settings.json`** — add `"outputStyle": "silent-worker"` so the reasonix session
-  activates it. (The setting names the style; Claude Code loads the matching file from the
-  install's output-styles dir.)
-- **`bin/claude-reasonix`** — ensure the output-styles dir is on the path Claude Code reads for the
-  reasonix session, and honor an OFF switch `CLAUDE_REASONIX_SILENT=0` (default ON in reasonix
-  flavor; setting it to 0 removes the outputStyle from the rendered settings so behavior reverts).
-- **`install.sh`** — copy `output-styles/*.md` into the install home (like it copies hooks).
+**Mechanism — verified empirically on Claude Code 2.1.195 (2026-06-29):**
+- Claude Code resolves `outputStyle` (a NAME, not a path) by searching known dirs only — there is
+  NO settings key / env var to add an arbitrary search path. The two that matter: `~/.claude/
+  output-styles/` (user-level, found from ANY cwd) and `<cwd>/.claude/output-styles/` (project).
+- A reasonix session runs in the USER's project cwd (a vscode repo, etc.), which has no fleet
+  `.claude/output-styles/`. Therefore the style must be installed **user-level: `~/.claude/
+  output-styles/silent-worker.md`** — NOT `$INSTALL_HOME` (Claude Code would never look there).
+- An output-style body is **appended** to the system prompt. `keep-coding-instructions: true`
+  preserves Claude Code's built-in software-engineering behavior (we want this — we only cut
+  chatter, not coding ability). With it `false`/omitted, ONLY our text applies and coding behavior
+  is dropped — wrong for us. So the frontmatter MUST set `keep-coding-instructions: true`.
+- Passing the style via `claude --settings <rendered.json>` with `{"outputStyle":"silent-worker"}`
+  activates it for THAT session only (proven: a probe style forced a sentinel token on output; a
+  non-existent style name → SILENT fallback to normal behavior, exit 0 — so a missing file is
+  fail-safe, never a crash).
+
+**Files:**
+- **`output-styles/silent-worker.md`** — new file shipped in the fleet repo. YAML frontmatter
+  (`name: silent-worker`, `description`, `keep-coding-instructions: true`) + the §3 boundary as the
+  body. Appended-with-coding-kept, not a full replacement.
+- **`bin/claude-reasonix`** — in `render_settings()`, add `"outputStyle": "silent-worker"` to the
+  rendered settings when SILENT is on; the OFF switch `CLAUDE_REASONIX_SILENT=0` removes the key
+  from the rendered JSON (Python step, not sed) so behavior reverts. Default ON in reasonix flavor.
+- **`install.sh`** — copy `output-styles/silent-worker.md` into **`~/.claude/output-styles/`**
+  (create the dir; this is a user-level dir we write into, mirroring how it writes the launcher into
+  `~/.local/bin`). Idempotent overwrite.
 
 Default: **ON in every reasonix session** (the user wants the reasonix session to always talk
 minimally), with `CLAUDE_REASONIX_SILENT=0` as the escape hatch. The plain `claude` session and
-other flavors are unaffected.
+other flavors are unaffected (they don't pass the rendered settings, and a project-cwd plain
+session still won't have the style activated because nothing sets `outputStyle` for it).
 
 ## 5. Measurement (no-claim-without-measurement)
 
@@ -98,7 +115,8 @@ Promote only if chatter/tokens drop substantially AND no KEEP-class message was 
 | Over-silence — a needed result/warning/lane-failure gets suppressed | §3 KEEP list is explicit (4 mandatory-speak classes); A/B verifies they still appear |
 | Opus ignores the output-style mid-task (as it ignored the delegation policy) | output-style replaces behavior (deeper than append-prompt); A/B measures real effect, not assumed |
 | A long silent chain hides a stall from the user | KEEP-class "failed lane / unexpected blocker" must still surface; the user also watches via /rc |
-| Style bleeds into non-reasonix sessions | scoped to the reasonix rendered settings only; plain claude untouched |
+| Style bleeds into non-reasonix sessions | scoped to the reasonix rendered settings only; plain claude untouched. NOTE: the .md file does live in the shared user dir `~/.claude/output-styles/`, but a style is INERT unless a session's `outputStyle` names it — only the reasonix rendered settings do. A plain `claude` session never activates it. |
+| Install can't write `~/.claude/output-styles/` | dir is created idempotently; a missing style → Claude Code silently falls back to normal behavior (verified), so the worst case is "no silence", never a crash |
 
 ## 7. Scope (YAGNI)
 
