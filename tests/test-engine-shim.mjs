@@ -100,4 +100,27 @@ if (out2.usage.prompt_cache_hit_tokens !== 90 || out2.usage.prompt_cache_miss_to
   process.exit(1);
 }
 
+// Regression: an engine error event sets content:"" with the real message in
+// ev.error (verified vs the real engine: vendor dist 39244/40412/40607). The shim
+// must surface ev.error to stderr + exit 3 — NOT the bare "engine error: unknown".
+// This was the root cause of "run-lane: engine error: unknown".
+const ERR_MSG = "Authentication failed (DeepSeek 401): your api key is invalid";
+const r3 = spawnSync("node", [SHIM], {
+  input: req,
+  env: { ...process.env, REASONIX_ENGINE_MOCK: "1", REASONIX_ENGINE_MOCK_ERROR: ERR_MSG },
+  encoding: "utf8",
+});
+if (r3.status !== 3) {
+  console.error("FAIL: error event should exit 3, got", r3.status, r3.stderr);
+  process.exit(1);
+}
+if (!r3.stderr.includes(ERR_MSG)) {
+  console.error("FAIL: stderr must carry the real ev.error message, got:", JSON.stringify(r3.stderr));
+  process.exit(1);
+}
+if (r3.stderr.includes("engine error: unknown")) {
+  console.error("FAIL: regressed — shim printed the bare 'unknown' instead of ev.error");
+  process.exit(1);
+}
+
 console.log("PASS: engine shim I/O contract");
