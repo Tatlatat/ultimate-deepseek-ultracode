@@ -136,6 +136,7 @@ Environment overrides:
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=0
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 # experimental native gateway mode
   CLAUDE_REASONIX_ANTHROPIC_API_KEY=... # preferred for router main Anthropic provider
+  CLAUDE_REASONIX_SILENT=0 # disable the quiet (silent-worker) output-style; default is quiet
 
 The worker count is dynamic. This launcher starts one Reasonix Fleet MCP server,
 not N static Reasonix servers. Claude can ask that server to run any number of
