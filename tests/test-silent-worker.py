@@ -41,5 +41,29 @@ check("install targets user-level ~/.claude/output-styles", ".claude/output-styl
 check("install does NOT put the style under INSTALL_HOME",
       '"$INSTALL_HOME/output-styles' not in install_sh)
 
+# --- Task 4: the render_settings decision (mirror of the launcher Python) ---
+import json
+
+def render(silent_on: bool):
+    text = (ROOT / "bridge-settings.json").read_text(encoding="utf-8")
+    text = text.replace("__INSTALL_HOME__", "/tmp/fake-install-home")
+    data = json.loads(text)
+    if silent_on:
+        data["outputStyle"] = "silent-worker"
+    else:
+        data.pop("outputStyle", None)
+    return data
+
+on = render(True)
+off = render(False)
+check("ON: rendered settings name the style", on.get("outputStyle") == "silent-worker")
+check("OFF: rendered settings omit outputStyle", "outputStyle" not in off)
+# the existing hooks block must survive the JSON round-trip both ways
+check("ON: hooks preserved", "hooks" in on and "PreToolUse" in on["hooks"])
+check("OFF: hooks preserved", "hooks" in off and "PreToolUse" in off["hooks"])
+# placeholder must be substituted, not left raw, in the rendered hook commands
+on_text = json.dumps(on)
+check("ON: __INSTALL_HOME__ substituted", "__INSTALL_HOME__" not in on_text)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
