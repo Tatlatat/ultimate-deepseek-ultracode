@@ -369,14 +369,18 @@ grep -q "bare prompt" <<<"$bare_output" || fail "bare claude-reasonix should for
 # Pull the --settings path out of the launcher's args, then read that file.
 sw_settings_path="$(sed -n 's/.*--settings \([^ ]*\).*/\1/p' <<<"$bare_output" | head -1)"
 [[ -f "$sw_settings_path" ]] || fail "silent-worker: could not find rendered settings path in launcher args"
-grep -q '"outputStyle": "silent-worker"' "$sw_settings_path" \
+# Snapshot the ON-arm content immediately so the OFF run cannot clobber it.
+sw_snapshot="$(cat "$sw_settings_path")"
+grep -q '"outputStyle": "silent-worker"' <<<"$sw_snapshot" \
   || fail "silent-worker: default reasonix session should set outputStyle:silent-worker"
 
 # --- silent-worker OFF switch: CLAUDE_REASONIX_SILENT=0 strips the key ---
 off_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 CLAUDE_REASONIX_SILENT=0 "$LAUNCHER" "bare prompt")"
 off_settings_path="$(sed -n 's/.*--settings \([^ ]*\).*/\1/p' <<<"$off_output" | head -1)"
 [[ -f "$off_settings_path" ]] || fail "silent-worker: could not find rendered settings path (OFF run)"
-if grep -q '"outputStyle"' "$off_settings_path"; then
+# Snapshot the OFF-arm content so both assertions are independent of file-overwrite ordering.
+off_snapshot="$(cat "$off_settings_path")"
+if grep -q '"outputStyle"' <<<"$off_snapshot"; then
   fail "silent-worker: CLAUDE_REASONIX_SILENT=0 should remove outputStyle from rendered settings"
 fi
 
