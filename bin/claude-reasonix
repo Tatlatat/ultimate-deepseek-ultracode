@@ -152,7 +152,7 @@ ensure_dirs() {
 # copy with the real INSTALL_HOME substituted and hand THAT to `claude --settings`.
 render_settings() {
   ensure_dirs
-  # Silent-worker default ON; only "0"/"false" turns it off.
+  # Silent-worker default ON; only 0/false/FALSE/no/NO turns it off.
   local silent="on"
   case "${CLAUDE_REASONIX_SILENT:-}" in
     0|false|FALSE|no|NO) silent="off" ;;
