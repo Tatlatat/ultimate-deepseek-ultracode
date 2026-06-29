@@ -71,6 +71,16 @@ const _harnessEngaged =
   && typeof req.acceptanceTest === "string" && req.acceptanceTest.trim() !== "";
 
 if (process.env.REASONIX_ENGINE_MOCK === "1" && !_harnessEngaged) {
+  // TEST-ONLY: drive the error branch hermetically (no DeepSeek). When
+  // REASONIX_ENGINE_MOCK_ERROR is set, emit an engine-SHAPED error (the real message
+  // in ev.error, content:"" — matching vendor dist 39244/40412/40607) and exit 3 the
+  // same way the off-path branch does. This proves stderr carries ev.error, NOT the
+  // bare "engine error: unknown" (the root-cause regression). Inert unless set.
+  if (process.env.REASONIX_ENGINE_MOCK_ERROR) {
+    const ev = { role: "error", content: "", error: process.env.REASONIX_ENGINE_MOCK_ERROR, errorDetail: { name: "MockError", message: process.env.REASONIX_ENGINE_MOCK_ERROR } };
+    const detail = ev.error || ev.errorDetail?.message || ev.content || "unknown";
+    fail(`run-lane: engine error: ${detail}`, 3);
+  }
   const text =
     process.env.REASONIX_ENGINE_MOCK_TEXT ??
     `mock reasonix lane for ${String(req.prompt ?? "").slice(0, 40)}`;
@@ -257,7 +267,10 @@ try {
       let t = "";
       for await (const ev of attemptLoop.step(p)) {
         if (ev.role === "assistant_final") { t = ev.content ?? ""; if (ev.stats) stats = ev.stats; }
-        else if (ev.role === "error") throw new Error(ev.content || "engine error");
+        // The engine sets content:"" on error events and carries the real message in
+        // ev.error / ev.errorDetail.message (verified: vendor dist lines 39244/40412/40607).
+        // Reading ev.content alone surfaced the bare "unknown"; read the real fields first.
+        else if (ev.role === "error") throw new Error(ev.error || ev.errorDetail?.message || ev.content || "engine error");
         else if (ev.role === "done") break;
       }
       return t;
@@ -270,7 +283,12 @@ try {
         text = ev.content ?? "";
         if (ev.stats) stats = ev.stats;
       } else if (ev.role === "error") {
-        fail(`run-lane: engine error: ${ev.content || "unknown"}`, 3);
+        // The engine yields error events with content:"" and the real message in
+        // ev.error / ev.errorDetail.message (vendor dist lines 39244/40412/40607).
+        // Reading ev.content here was the cause of the bare "run-lane: engine error:
+        // unknown" — the diagnostic (auth/balance/context/network) was being dropped.
+        const detail = ev.error || ev.errorDetail?.message || ev.content || "unknown";
+        fail(`run-lane: engine error: ${detail}`, 3);
       } else if (ev.role === "done") {
         break;
       }

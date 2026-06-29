@@ -95,6 +95,22 @@ if [[ "$CLAUDE_REASONIX_FLAVOR" == "reasonix" ]]; then
   # exporting it here keeps the resolution explicit/observable.
   : "${REASONIX_ENGINE_DIST:=$INSTALL_HOME/vendor/reasonix-engine/dist/index.js}"
   export REASONIX_ENGINE_DIST
+  # Conductor mode (default OFF). When the user sets it to 1, the conductor-guard
+  # hook denies Opus's operator tools so work is delegated to the Reasonix fleet.
+  # Pass through if set; never force-enable (measure-then-promote).
+  [[ -n "${CLAUDE_REASONIX_CONDUCTOR_REVIEW_ONLY:-}" ]] && export CLAUDE_REASONIX_CONDUCTOR_REVIEW_ONLY
+  # Big-read guard (default ON inside the hook): blocks Opus from reading a huge
+  # file whole into its own context — the measured cause of autocompact thrashing
+  # (one 185K-token file = 93% of the window). A range read (offset/limit) passes;
+  # the hook tells Opus to read a range / grep / dispatch a lane instead. Pass the
+  # OFF switch + threshold override through if the user set them; default needs no export.
+  [[ -n "${CLAUDE_REASONIX_BIG_READ_GUARD:-}" ]] && export CLAUDE_REASONIX_BIG_READ_GUARD
+  [[ -n "${CLAUDE_REASONIX_BIG_READ_THRESHOLD_BYTES:-}" ]] && export CLAUDE_REASONIX_BIG_READ_THRESHOLD_BYTES
+  # Silent-worker output-style (default ON in reasonix). The reasonix session talks
+  # minimally — long tool chains run silent; only result / needed-question / warning
+  # are spoken. render_settings injects outputStyle:silent-worker unless this is 0.
+  # Pass the OFF switch through if the user set it; default needs no export.
+  [[ -n "${CLAUDE_REASONIX_SILENT:-}" ]] && export CLAUDE_REASONIX_SILENT
   # DeepSeek auth: pass DEEPSEEK_API_KEY through if the user set it. If not, the
   # in-process engine falls back to ~/.reasonix/config.json via loadEndpoint
   # (exactly how the old acp path authenticated), so no key is required on a
@@ -120,6 +136,7 @@ Environment overrides:
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=0
   CLAUDE_REASONIX_NATIVE_SUBAGENTS=1 # experimental native gateway mode
   CLAUDE_REASONIX_ANTHROPIC_API_KEY=... # preferred for router main Anthropic provider
+  CLAUDE_REASONIX_SILENT=0 # disable the quiet (silent-worker) output-style; default is quiet
 
 The worker count is dynamic. This launcher starts one Reasonix Fleet MCP server,
 not N static Reasonix servers. Claude can ask that server to run any number of
@@ -136,14 +153,30 @@ ensure_dirs() {
 # copy with the real INSTALL_HOME substituted and hand THAT to `claude --settings`.
 render_settings() {
   ensure_dirs
-  python3 - "$SETTINGS_FILE" "$INSTALL_HOME" "$RENDERED_SETTINGS" <<'PY'
+  # Silent-worker default ON; only 0/false/FALSE/no/NO turns it off.
+  local silent="on"
+  case "${CLAUDE_REASONIX_SILENT:-}" in
+    0|false|FALSE|no|NO) silent="off" ;;
+  esac
+  python3 - "$SETTINGS_FILE" "$INSTALL_HOME" "$RENDERED_SETTINGS" "$silent" <<'PY'
+import json
 import sys
-src, install_home, dst = sys.argv[1:4]
+src, install_home, dst, silent = sys.argv[1:5]
 with open(src, "r", encoding="utf-8") as fh:
     text = fh.read()
 text = text.replace("__INSTALL_HOME__", install_home)
+data = json.loads(text)
+# Inject the output-style by NAME (Claude Code resolves it from
+# ~/.claude/output-styles/silent-worker.md). Default ON; CLAUDE_REASONIX_SILENT=0
+# strips the key so behavior reverts. A missing style file -> Claude Code silently
+# falls back to normal behavior (verified), so this is fail-safe.
+if silent == "on":
+    data["outputStyle"] = "silent-worker"
+else:
+    data.pop("outputStyle", None)
 with open(dst, "w", encoding="utf-8") as fh:
-    fh.write(text)
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
 PY
 }
 

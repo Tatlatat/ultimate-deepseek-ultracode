@@ -70,6 +70,8 @@ grep -qi "Agent-first policy\|Reasonix-first" "$RX_PROMPT" || fail "reasonix pro
 grep -qi "ALWAYS delegate" "$RX_PROMPT" || fail "reasonix prompt must list always-delegate task types"
 grep -qi "Claude keeps these" "$RX_PROMPT" || fail "reasonix prompt must list what Claude keeps doing"
 grep -qi "look at the agent first\|agent does it" "$RX_PROMPT" || fail "reasonix prompt must teach look-at-agent-first decision"
+grep -qi "one genuinely small" "$RX_PROMPT" && fail "conductor mode: the small-edit loophole line must be removed"
+grep -qi "Banned excuses" "$RX_PROMPT" && fail "conductor mode: the Banned-excuses list must be removed (the hook enforces now)"
 
 python3 - "$ROOT/bridge-settings.json" "$WORKFLOW_HOOK" "$ROOT" <<'PY'
 import json
@@ -106,6 +108,37 @@ required = {
 }
 if not required.issubset(set(permissions)):
     raise SystemExit(f"bridge settings must allow Reasonix Fleet MCP tools: {permissions}")
+
+# Conductor guard must be wired on the operator tools (Edit/Write/MultiEdit/Bash).
+hook_cmds = [h.get("command", "") for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
+matchers = [g.get("matcher", "") for g in settings.get("hooks", {}).get("PreToolUse", [])]
+conductor_hook_cmds = [h.get("command", "") for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", []) if "conductor-guard.py" in h.get("command", "")]
+if not conductor_hook_cmds:
+    raise SystemExit("bridge settings must wire the conductor-guard hook")
+# The conductor-guard matcher must name ALL four operator-tool classes:
+# Edit, Write, MultiEdit (file-write tools) and Bash (for mutating shell commands).
+conductor_matchers = [g.get("matcher", "") for g in settings.get("hooks", {}).get("PreToolUse", []) if any("conductor-guard.py" in h.get("command", "") for h in g.get("hooks", []))]
+if not conductor_matchers:
+    raise SystemExit("conductor-guard hook group has no matcher")
+cm = conductor_matchers[0]
+for required_tool in ("Edit", "Write", "MultiEdit", "Bash"):
+    if required_tool not in cm:
+        raise SystemExit(f"conductor-guard matcher must contain {required_tool!r}: {cm!r}")
+# Big-read guard must be wired on Read, and it is the FIRST PreToolUse group so it
+# fires before anything else (it stops Opus reading a huge file whole into context —
+# the measured autocompact-thrashing cause).
+big_read_matchers = [g.get("matcher", "") for g in settings.get("hooks", {}).get("PreToolUse", []) if any("big-read-guard.py" in h.get("command", "") for h in g.get("hooks", []))]
+if not big_read_matchers:
+    raise SystemExit("bridge settings must wire the big-read-guard hook")
+if "Read" not in big_read_matchers[0]:
+    raise SystemExit(f"big-read-guard matcher must contain 'Read': {big_read_matchers[0]!r}")
+first_group = settings.get("hooks", {}).get("PreToolUse", [{}])[0]
+first_group_cmds = [h.get("command", "") for h in first_group.get("hooks", [])]
+if not any("big-read-guard.py" in c for c in first_group_cmds):
+    raise SystemExit("big-read-guard must be the FIRST entry in the PreToolUse array")
+# The conductor-guard must still be wired (it need not be first now that big-read is).
+if not any("conductor-guard.py" in c for c in hook_cmds):
+    raise SystemExit("conductor-guard hook must still be wired")
 PY
 
 tmp_home="$(mktemp -d)"
@@ -331,6 +364,26 @@ if grep -q -- "--strict-mcp-config" <<<"$bare_output"; then
   fail "bare claude-reasonix should not block normal MCP/plugins"
 fi
 grep -q "bare prompt" <<<"$bare_output" || fail "bare claude-reasonix should forward prompt"
+
+# --- silent-worker: the rendered settings carry outputStyle by default ---
+# Pull the --settings path out of the launcher's args, then read that file.
+sw_settings_path="$(sed -n 's/.*--settings \([^ ]*\).*/\1/p' <<<"$bare_output" | head -1)"
+[[ -f "$sw_settings_path" ]] || fail "silent-worker: could not find rendered settings path in launcher args"
+# Snapshot the ON-arm content immediately so the OFF run cannot clobber it.
+sw_snapshot="$(cat "$sw_settings_path")"
+grep -q '"outputStyle": "silent-worker"' <<<"$sw_snapshot" \
+  || fail "silent-worker: default reasonix session should set outputStyle:silent-worker"
+
+# --- silent-worker OFF switch: CLAUDE_REASONIX_SILENT=0 strips the key ---
+off_output="$(CLAUDE_REASONIX_NATIVE_SUBAGENTS=0 CLAUDE_REASONIX_SILENT=0 "$LAUNCHER" "bare prompt")"
+off_settings_path="$(sed -n 's/.*--settings \([^ ]*\).*/\1/p' <<<"$off_output" | head -1)"
+[[ -f "$off_settings_path" ]] || fail "silent-worker: could not find rendered settings path (OFF run)"
+# Snapshot the OFF-arm content so both assertions are independent of file-overwrite ordering.
+off_snapshot="$(cat "$off_settings_path")"
+if grep -q '"outputStyle"' <<<"$off_snapshot"; then
+  fail "silent-worker: CLAUDE_REASONIX_SILENT=0 should remove outputStyle from rendered settings"
+fi
+
 plain_output="$("$LAUNCHER" plain "plain prompt")"
 if grep -q -- "--mcp-config" <<<"$plain_output"; then
   fail "plain mode should bypass fleet"
