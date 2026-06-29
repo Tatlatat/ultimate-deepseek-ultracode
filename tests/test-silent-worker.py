@@ -32,5 +32,14 @@ check("frontmatter keeps coding instructions", "keep-coding-instructions: true" 
 # the body must encode the KEEP/CUT boundary, not be empty
 check("body is non-trivial", len(text) > 400)
 
+# --- Task 3: install.sh copies the style to the user-level output-styles dir ---
+install_sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+check("install copies silent-worker.md", "output-styles/silent-worker.md" in install_sh)
+check("install targets user-level ~/.claude/output-styles", ".claude/output-styles" in install_sh)
+# guard against the spec footgun: it must NOT be installed into INSTALL_HOME (Claude
+# Code never looks there for output styles)
+check("install does NOT put the style under INSTALL_HOME",
+      '"$INSTALL_HOME/output-styles' not in install_sh)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

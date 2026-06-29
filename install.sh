@@ -110,6 +110,13 @@ cp -f "$SRC/hooks/"*.py "$INSTALL_HOME/hooks/"
 # imports sibling modules (e.g. ./lane-opts.mjs), and copying only run-lane.mjs leaves
 # those imports dangling and breaks every lane at runtime.
 cp -f "$SRC/engine/"*.mjs "$INSTALL_HOME/engine/"
+# The silent-worker output-style. Claude Code resolves output styles by NAME from
+# ~/.claude/output-styles/ (user-level, found from any cwd) — NOT from INSTALL_HOME —
+# so install it there, not into the fleet home. Idempotent overwrite. A missing style
+# would make Claude Code silently fall back to normal behavior, so this is fail-safe.
+USER_OUTPUT_STYLES="$HOME/.claude/output-styles"
+mkdir -p "$USER_OUTPUT_STYLES"
+cp -f "$SRC/output-styles/silent-worker.md" "$USER_OUTPUT_STYLES/silent-worker.md"
 # The gateway is now a package: reasonix-native-gateway.py is an 11-line shim that
 # does sys.path.insert(dirname) then `from reasonix_gateway import *`. The package
 # MUST land beside the shim at $INSTALL_HOME/reasonix_gateway/ or the import dangles
