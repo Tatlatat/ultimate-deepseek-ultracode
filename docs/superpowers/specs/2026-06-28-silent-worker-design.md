@@ -124,6 +124,19 @@ In scope: the `silent-worker.md` output-style, the settings wiring, the launcher
 install copy, and the A/B measurement. OUT of scope: any hook-based trimming (not feasible), any
 change to what tools Opus uses, and per-task verbosity tuning. One style, on by default, measured.
 
+## 7b. A/B verdict (measured 2026-06-29) — PROMOTE, default ON
+
+Measured in an isolated rig (`claude -p --output-format stream-json` on a fixed tool-using task, same model haiku-4-5, OFF vs ON via `--settings {"outputStyle":"silent-worker"}`; `system.init.output_style` confirmed active). Two runs — a 6-tool task and a 13-tool task:
+
+| metric | short OFF→ON | long OFF→ON |
+|---|---|---|
+| chatter chars | 826 → 396 (**−52.1%**) | 609 → 287 (**−52.9%**) |
+| final-result block chars | 586 → 190 (−68%) | 354 → 121 (−66%) |
+| total output tokens | 1058 → 917 (−13.3%) | 1781 → 1692 (−5.0%) |
+| tool uses (work parity) | 6 = 6 | 13 = 13 |
+
+KEEP-audit PASS: the final result line stayed concrete and present in ON ("3 files now reference div", "6 VERSION_ constants now exist"); no warning/decision-question was due and none was suppressed; edits identical (exact work parity). **Decision: PROMOTE — keep default ON.** Honest caveat: on haiku the per-tool narration *blocks* shrank in length but were not eliminated; complete silence-between-tools depends on the model following the style more aggressively, and the real orchestrator is Opus (follows output-styles harder than haiku) — so production should meet or exceed the measured haiku floor. The largest single win is the verbose post-result-explanation collapse (−66%), which is design §3 narration-type-3. Full record: memory `reasonix-silent-worker-ab.md`; rig under `$CLAUDE_JOB_DIR/tmp/silent-ab/`.
+
 ## 8. Success criteria
 
 - With the style ON, on a long task Opus runs its tool chain with no per-tool narration and emits
